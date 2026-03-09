@@ -500,6 +500,39 @@
   border-radius: 4px;
 }
 
+/* ── Formulario innovación ── */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--verde-oscuro);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.form-input {
+  border: 1px solid var(--gris-borde);
+  border-radius: 7px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-family: var(--font);
+  color: #1a2e1a;
+  background: var(--blanco);
+  transition: border-color 0.18s, box-shadow 0.18s;
+  resize: vertical;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--verde-primario);
+  box-shadow: 0 0 0 3px rgba(0, 102, 51, 0.10);
+}
+
 /* ── Info bar inferior ── */
 .info-row {
   display: grid;

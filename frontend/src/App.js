@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import './App.css';
+import InnovacionPage from './InnovacionPage';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080/api';
 
@@ -67,7 +69,8 @@ const API_ENDPOINTS = [
 ];
 
 const NAV_ITEMS = [
-  { icon: '⊞', label: 'Dashboard', active: true },
+  { icon: '⊞', label: 'Dashboard' },
+  { icon: '💡', label: 'Innovación' },
   { icon: '⚙', label: 'Automatizaciones' },
   { icon: '▶', label: 'Ejecuciones' },
   { icon: '📄', label: 'Logs' },
@@ -82,8 +85,14 @@ function today() {
 }
 
 export default function App() {
+  const [activePage, setActivePage] = useState('Dashboard');
   const activeCount = MODULES.filter(m => m.status === 'activo').length;
   const devCount    = MODULES.filter(m => m.status === 'desarrollo').length;
+
+  const pageTitles = {
+    'Dashboard': 'Panel de Control · Automatizaciones',
+    'Innovación': 'Gestión de Innovación · Priorización',
+  };
 
   return (
     <div className="layout">
@@ -105,7 +114,8 @@ export default function App() {
           {NAV_ITEMS.map((item) => (
             <button
               key={item.label}
-              className={`nav-item ${item.active ? 'active' : ''}`}
+              className={`nav-item ${activePage === item.label ? 'active' : ''}`}
+              onClick={() => setActivePage(item.label)}
             >
               <span className="nav-item-icon">{item.icon}</span>
               {item.label}
@@ -123,15 +133,20 @@ export default function App() {
 
         {/* Topbar */}
         <header className="topbar">
-          <span className="topbar-title">Panel de Control · Automatizaciones</span>
+          <span className="topbar-title">
+            {pageTitles[activePage] || `${activePage}`}
+          </span>
           <div className="topbar-right">
             <span className="topbar-date">{today()}</span>
             <span className="topbar-env">Desarrollo</span>
           </div>
         </header>
 
-        {/* Contenido */}
-        <div className="page">
+        {/* Innovación */}
+        {activePage === 'Innovación' && <InnovacionPage />}
+
+        {/* Contenido Dashboard */}
+        {activePage !== 'Innovación' && <div className="page">
 
           {/* Banner */}
           <div className="banner">
@@ -266,7 +281,7 @@ export default function App() {
             </table>
           </div>
 
-        </div>
+        </div>}
       </div>
     </div>
   );
