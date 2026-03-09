@@ -1,0 +1,49 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-automation_hub}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  nlp-camara:
+    build:
+      context: ../nlp-camara
+      dockerfile: Dockerfile
+    ports:
+      - "9002:8001"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    env_file: .env.prod
+    environment:
+      DATABASE_URL: "true"
+      DB_HOST: db
+      NLP_CAMARA_URL: http://nlp-camara:8001
+    depends_on:
+      - db
+      - nlp-camara
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend.prod
+      args:
+        REACT_APP_API_URL: https://automation-hub-finagro.ngrok.io/api
+        REACT_APP_NLP_URL: https://sarlaft.ngrok.io
+    ports:
+      - "9000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data_prod:
