@@ -15,7 +15,7 @@ const MODULES = [
       'Extracción automática de datos de certificados de Cámara de Comercio para validación de listas restrictivas y análisis de riesgo de lavado de activos.',
     processes: ['Cruce de información', 'Listas restrictivas', 'Análisis de riesgo'],
     status: 'activo',
-    url: 'http://localhost:8001',
+    url: process.env.REACT_APP_NLP_URL || 'http://localhost:8001',
     urlLabel: 'Abrir servicio NLP',
   },
   {
