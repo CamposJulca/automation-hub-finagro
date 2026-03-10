@@ -26,6 +26,20 @@ services:
     networks:
       - finagro-net
 
+  # ── Servicio FactIA (interno — descarga y procesa facturas electrónicas) ─────
+  factia:
+    build:
+      context: ../FactIA
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      FACTIA_DATA_DIR: /data/factia
+    volumes:
+      - factia_data:/data/factia
+    networks:
+      - finagro-net
+
   # ── Backend Django + Gunicorn ────────────────────────────────────────────────
   backend:
     build:
@@ -36,10 +50,12 @@ services:
       DATABASE_URL:    "true"
       DB_HOST:         db
       NLP_CAMARA_URL:  http://nlp-camara:8001
+      FACTIA_URL:      http://factia:8002
       ALLOWED_HOSTS:   "*"
     depends_on:
       - db
       - nlp-camara
+      - factia
     restart: unless-stopped
     networks:
       - finagro-net
@@ -63,3 +79,4 @@ services:
 
 volumes:
   postgres_data_prod:
+  factia_data:

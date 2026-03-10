@@ -13,17 +13,31 @@ const MODULES = [
     status: 'activo',
     route: '/sarlaft',
   },
+  {
+    id: 'facturacion',
+    name: 'Facturación Electrónica',
+    fullName: 'Gestión de Facturas Electrónicas DIAN',
+    icon: '🧾',
+    iconBg: '#e3f2fd',
+    description:
+      'Descarga, clasifica y extrae metadata de facturas electrónicas desde el buzón de correo de Finagro. Genera reportes consolidados para conciliación contable.',
+    processes: ['Descarga automática', 'Clasificación XML', 'Exportar CSV'],
+    status: 'activo',
+    route: '/facturacion',
+  },
 ];
 
 const API_ENDPOINTS = [
-  { method: 'GET',  url: '/api/executions/',           desc: 'Historial de ejecuciones' },
-  { method: 'GET',  url: '/api/logs/',                 desc: 'Logs de ejecución' },
-  { method: 'POST', url: '/api/sarlaft/certificados/', desc: 'Extraer certificados Cámara de Comercio' },
+  { method: 'GET',  url: '/api/executions/',              desc: 'Historial de ejecuciones' },
+  { method: 'GET',  url: '/api/logs/',                    desc: 'Logs de ejecución' },
+  { method: 'POST', url: '/api/sarlaft/certificados/',    desc: 'Extraer certificados Cámara de Comercio' },
+  { method: 'POST', url: '/api/facturacion/descargar/',   desc: 'Descargar facturas desde buzón de correo' },
+  { method: 'POST', url: '/api/facturacion/procesar/',    desc: 'Clasificar ZIPs y extraer metadata XML' },
+  { method: 'GET',  url: '/api/facturacion/facturas/',    desc: 'Listar facturas procesadas' },
 ];
 
 export default function HomePage() {
   const activeCount = MODULES.filter(m => m.status === 'activo').length;
-  const devCount    = MODULES.filter(m => m.status === 'desarrollo').length;
 
   return (
     <div className="page">
@@ -70,10 +84,10 @@ export default function HomePage() {
           </div>
         </div>
         <div className="info-card">
-          <div className="info-card-icon" style={{ background: '#fce4ec' }}>🔄</div>
+          <div className="info-card-icon" style={{ background: '#e3f2fd' }}>🧾</div>
           <div className="info-card-text">
-            <strong>Fase 1</strong>
-            <span>{devCount} módulos en desarrollo</span>
+            <strong>FactIA</strong>
+            <span>Facturación DIAN · Activo</span>
           </div>
         </div>
       </div>

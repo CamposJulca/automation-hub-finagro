@@ -6,5 +6,6 @@ urlpatterns = [
     path('api/', include('automation.urls')),
     path('api/', include('execution.urls')),
     path('api/', include('logs.urls')),
-    path('api/sarlaft/', include('modules.sarlaft.urls')),
+    path('api/sarlaft/',      include('modules.sarlaft.urls')),
+    path('api/facturacion/',  include('modules.facturacion.urls')),
 ]

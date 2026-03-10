@@ -2,10 +2,12 @@ import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router
 import './App.css';
 import HomePage from './pages/HomePage';
 import SarlaftPage from './pages/SarlaftPage';
+import InnovacionPage from './InnovacionPage';
 
 const PAGE_TITLES = {
   '/': 'Panel de Control · Automatizaciones',
   '/sarlaft': 'SARLAFT · Certificados Cámara de Comercio',
+  '/innovacion': 'Innovación · Priorización de Necesidades',
 };
 
 const NAV_MAIN = [
@@ -14,6 +16,7 @@ const NAV_MAIN = [
 
 const NAV_MODULES = [
   { icon: '🔍', label: 'SARLAFT', to: '/sarlaft', status: 'activo' },
+  { icon: '💡', label: 'Innovación', to: '/innovacion', status: 'activo' },
 ];
 
 function today() {
@@ -89,8 +92,9 @@ function Layout() {
         </header>
 
         <Routes>
-          <Route path="/"        element={<HomePage />} />
-          <Route path="/sarlaft" element={<SarlaftPage />} />
+          <Route path="/"           element={<HomePage />} />
+          <Route path="/sarlaft"    element={<SarlaftPage />} />
+          <Route path="/innovacion" element={<InnovacionPage />} />
         </Routes>
       </div>
     </div>
