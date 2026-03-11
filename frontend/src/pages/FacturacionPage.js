@@ -744,7 +744,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {facturasFiltradas.map((f, i) => (
+                  {facturasFiltradas.slice(-10).map((f, i) => (
                     <tr key={f.id || i}>
                       <td style={{ color: '#bbb', fontWeight: 600 }}>{i + 1}</td>
                       <td><span style={{ fontFamily: 'monospace', fontSize: 12, background: '#f5f5f5', padding: '2px 6px', borderRadius: 4 }}>{f.proveedor_nit || '—'}</span></td>
