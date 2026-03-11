@@ -1,5 +1,8 @@
 from decimal import Decimal, InvalidOperation
 
+import requests as _requests
+
+from django.http import StreamingHttpResponse
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -11,7 +14,7 @@ from execution.models import Execution
 from logs.models import ExecutionLog
 from .models import FacturaElectronica
 from .serializers import FacturaElectronicaSerializer
-from .client import FactIAClient
+from .client import FactIAClient, FACTIA_URL
 
 
 def _get_or_create_automation():
@@ -54,8 +57,11 @@ class DescargarFacturasView(APIView):
             message='Iniciando descarga del histórico de correos.',
         )
 
+        fecha_desde = request.data.get('fecha_desde')
+        fecha_hasta = request.data.get('fecha_hasta')
+
         try:
-            respuesta = FactIAClient().descargar()
+            respuesta = FactIAClient().descargar(fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
         except Exception as exc:
             execution.status = 'failed'
             execution.end_time = timezone.now()
@@ -179,3 +185,99 @@ class ListarFacturasView(APIView):
         facturas = FacturaElectronica.objects.all()
         serializer = FacturaElectronicaSerializer(facturas, many=True)
         return Response({'facturas': serializer.data, 'total': facturas.count()})
+
+
+# ── Stats ────────────────────────────────────────────────────────────────────
+
+class StatsDescargaView(APIView):
+    """
+    GET /api/facturacion/stats/
+
+    Retorna estadísticas del historico descargado: mensajes por mes y rango de fechas.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            resp = _requests.get(f'{FACTIA_URL}/api/stats/', timeout=10)
+            return Response(resp.json())
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+# ── Abort ────────────────────────────────────────────────────────────────────
+
+class AbortarView(APIView):
+    """
+    POST /api/facturacion/abortar/
+    Envía señal de abort al servicio FactIA para detener el job en curso.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            resp = _requests.post(f'{FACTIA_URL}/api/abort/', timeout=5)
+            return Response(resp.json())
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+# ── Streaming SSE proxies ─────────────────────────────────────────────────────
+
+class DescargarStreamView(APIView):
+    """
+    POST /api/facturacion/descargar/stream/
+
+    Proxy SSE: autentica con DRF y reenvía el stream de FactIA línea a línea.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        body = {}
+        if request.data.get('fecha_desde'):
+            body['fecha_desde'] = request.data['fecha_desde']
+        if request.data.get('fecha_hasta'):
+            body['fecha_hasta'] = request.data['fecha_hasta']
+
+        factia_resp = _requests.post(
+            f'{FACTIA_URL}/api/descargar/stream/',
+            json=body,
+            stream=True,
+            timeout=700,
+        )
+
+        def event_gen():
+            for line in factia_resp.iter_lines():
+                if line:
+                    yield line.decode('utf-8', errors='replace') + '\n'
+
+        resp = StreamingHttpResponse(event_gen(), content_type='text/event-stream; charset=utf-8')
+        resp['Cache-Control']      = 'no-cache'
+        resp['X-Accel-Buffering']  = 'no'
+        return resp
+
+
+class ProcesarStreamView(APIView):
+    """
+    POST /api/facturacion/procesar/stream/
+
+    Proxy SSE: autentica con DRF y reenvía el stream de FactIA línea a línea.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        factia_resp = _requests.post(
+            f'{FACTIA_URL}/api/procesar/stream/',
+            stream=True,
+            timeout=700,
+        )
+
+        def event_gen():
+            for line in factia_resp.iter_lines():
+                if line:
+                    yield line.decode('utf-8', errors='replace') + '\n'
+
+        resp = StreamingHttpResponse(event_gen(), content_type='text/event-stream; charset=utf-8')
+        resp['Cache-Control']      = 'no-cache'
+        resp['X-Accel-Buffering']  = 'no'
+        return resp

@@ -3,11 +3,13 @@ import './App.css';
 import HomePage from './pages/HomePage';
 import SarlaftPage from './pages/SarlaftPage';
 import InnovacionPage from './InnovacionPage';
+import FacturacionPage from './pages/FacturacionPage';
 
 const PAGE_TITLES = {
   '/': 'Panel de Control · Automatizaciones',
   '/sarlaft': 'SARLAFT · Certificados Cámara de Comercio',
   '/innovacion': 'Innovación · Priorización de Necesidades',
+  '/facturacion': 'Facturación Electrónica · DIAN',
 };
 
 const NAV_MAIN = [
@@ -16,6 +18,7 @@ const NAV_MAIN = [
 
 const NAV_MODULES = [
   { icon: '🔍', label: 'SARLAFT', to: '/sarlaft', status: 'activo' },
+  { icon: '🧾', label: 'Facturación', to: '/facturacion', status: 'activo' },
   { icon: '💡', label: 'Innovación', to: '/innovacion', status: 'activo' },
 ];
 
@@ -92,9 +95,10 @@ function Layout() {
         </header>
 
         <Routes>
-          <Route path="/"           element={<HomePage />} />
-          <Route path="/sarlaft"    element={<SarlaftPage />} />
-          <Route path="/innovacion" element={<InnovacionPage />} />
+          <Route path="/"            element={<HomePage />} />
+          <Route path="/sarlaft"     element={<SarlaftPage />} />
+          <Route path="/facturacion" element={<FacturacionPage />} />
+          <Route path="/innovacion"  element={<InnovacionPage />} />
         </Routes>
       </div>
     </div>

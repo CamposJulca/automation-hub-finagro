@@ -9,9 +9,14 @@ FACTIA_URL = getattr(settings, 'FACTIA_URL', 'http://localhost:8002')
 
 
 class FactIAClient:
-    def descargar(self):
+    def descargar(self, fecha_desde=None, fecha_hasta=None):
         """Descarga ZIPs de facturas desde el buzón de correo. Puede ser lento."""
-        response = requests.post(f'{FACTIA_URL}/api/descargar/', timeout=600)
+        body = {}
+        if fecha_desde:
+            body['fecha_desde'] = fecha_desde
+        if fecha_hasta:
+            body['fecha_hasta'] = fecha_hasta
+        response = requests.post(f'{FACTIA_URL}/api/descargar/', json=body or None, timeout=600)
         response.raise_for_status()
         return response.json()
 
