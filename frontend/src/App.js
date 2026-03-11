@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import './App.css';
 import HomePage from './pages/HomePage';
@@ -35,39 +36,43 @@ function navClass({ isActive }) {
 function Layout() {
   const { pathname } = useLocation();
   const title = PAGE_TITLES[pathname] || 'Automation Hub · Finagro';
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="layout">
+    <div className={`layout${collapsed ? ' sidebar-collapsed' : ''}`}>
 
       {/* ── Sidebar ── */}
-      <aside className="sidebar">
+      <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="sidebar-logo-badge">
             <div className="sidebar-logo-icon">🌿</div>
-            <div className="sidebar-logo-text">
-              <h2>Automation Hub</h2>
-              <span>Finagro · 2026</span>
-            </div>
+            {!collapsed && (
+              <div className="sidebar-logo-text">
+                <h2>Automation Hub</h2>
+                <span>Finagro · 2026</span>
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="sidebar-section-label">Navegación</div>
+        {!collapsed && <div className="sidebar-section-label">Navegación</div>}
         <nav className="sidebar-nav">
           {NAV_MAIN.map(item => (
-            <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
+            <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass} title={collapsed ? item.label : undefined}>
               <span className="nav-item-icon">{item.icon}</span>
-              {item.label}
+              {!collapsed && item.label}
             </NavLink>
           ))}
         </nav>
 
-        <div className="sidebar-section-label">Módulos</div>
+        {!collapsed && <div className="sidebar-section-label">Módulos</div>}
+        {collapsed && <div className="sidebar-section-label" style={{ padding: '20px 0 8px', textAlign: 'center' }}>·</div>}
         <nav className="sidebar-nav">
           {NAV_MODULES.map(item => (
-            <NavLink key={item.to} to={item.to} className={navClass}>
+            <NavLink key={item.to} to={item.to} className={navClass} title={collapsed ? item.label : undefined}>
               <span className="nav-item-icon">{item.icon}</span>
-              {item.label}
-              {item.status === 'activo' && (
+              {!collapsed && item.label}
+              {!collapsed && item.status === 'activo' && (
                 <span style={{
                   marginLeft: 'auto', fontSize: 8, background: '#00853f',
                   color: '#fff', padding: '2px 6px', borderRadius: 8, letterSpacing: 0.5,
@@ -79,9 +84,20 @@ function Layout() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          Fondo para el Financiamiento<br />del Sector Agropecuario
-        </div>
+        {!collapsed && (
+          <div className="sidebar-footer">
+            Fondo para el Financiamiento<br />del Sector Agropecuario
+          </div>
+        )}
+
+        {/* Botón colapsar */}
+        <button
+          className="sidebar-toggle"
+          onClick={() => setCollapsed(c => !c)}
+          title={collapsed ? 'Expandir sidebar' : 'Minimizar sidebar'}
+        >
+          {collapsed ? '›' : '‹'}
+        </button>
       </aside>
 
       {/* ── Main ── */}

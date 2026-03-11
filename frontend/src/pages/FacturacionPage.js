@@ -7,6 +7,13 @@ function getBasicAuthHeader(u, p) {
   return 'Basic ' + btoa(`${u}:${p}`);
 }
 
+function fmtFecha(iso) {
+  // "2026-01-03" → "03/01/2026"
+  if (!iso) return '—';
+  const [y, m, d] = iso.slice(0, 10).split('-');
+  return `${d}/${m}/${y}`;
+}
+
 function fmtCOP(val) {
   if (val === null || val === undefined || val === '') return '—';
   return '$' + Number(val).toLocaleString('es-CO', { minimumFractionDigits: 0 });
@@ -529,7 +536,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {stats?.fecha_max && (
             <span style={{ fontSize: 11, background: '#e8f5e9', color: '#2e7d32', padding: '4px 10px', borderRadius: 20, fontWeight: 700 }}>
-              Última descarga: {stats.fecha_max.slice(0, 10)}
+              Última descarga: {fmtFecha(stats.fecha_max)}
             </span>
           )}
           <button
@@ -589,7 +596,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: '#1565c0' }}>{stats.total_zips}</td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', color: '#888' }}>{stats.total_con_zip}</td>
                     <td style={{ fontSize: 11, color: '#888' }}>
-                      {stats.fecha_min?.slice(0,10)} → {stats.fecha_max?.slice(0,10)}
+                      {fmtFecha(stats.fecha_min)} → {fmtFecha(stats.fecha_max)}
                     </td>
                   </tr>
                 </tfoot>
@@ -733,7 +740,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
               <table className="api-table">
                 <thead>
                   <tr>
-                    {['#','NIT Proveedor','Número Factura','Código','Valor Factura','IVA','F. Emisión','F. Vencimiento'].map(h => <th key={h}>{h}</th>)}
+                    {['#','NIT Proveedor','Número Factura','Código','Valor Factura','IVA','F. Emisión','F. Vencimiento','Observaciones'].map(h => <th key={h}>{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -745,8 +752,9 @@ function FacturacionDashboard({ authHeader, onLogout }) {
                       <td style={{ color: '#888' }}>{f.codigo || '—'}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600, color: '#1565c0' }}>{fmtCOP(f.valor_factura)}</td>
                       <td style={{ textAlign: 'right', color: '#555' }}>{fmtCOP(f.iva_facturado_proveedor)}</td>
-                      <td>{f.fecha_emision ? <span style={{ background: '#e3f2fd', color: '#1565c0', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20 }}>{f.fecha_emision}</span> : '—'}</td>
-                      <td>{f.fecha_vencimiento ? <span style={{ background: '#fce4ec', color: '#c62828', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20 }}>{f.fecha_vencimiento}</span> : '—'}</td>
+                      <td>{f.fecha_emision ? <span style={{ background: '#e3f2fd', color: '#1565c0', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20 }}>{fmtFecha(f.fecha_emision)}</span> : '—'}</td>
+                      <td>{f.fecha_vencimiento ? <span style={{ background: '#fce4ec', color: '#c62828', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20 }}>{fmtFecha(f.fecha_vencimiento)}</span> : '—'}</td>
+                      <td style={{ fontSize: 12, color: '#666', fontStyle: f.observaciones?.includes('***') ? 'italic' : 'normal' }}>{f.observaciones || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
