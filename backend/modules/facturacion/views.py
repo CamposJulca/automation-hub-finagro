@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal, InvalidOperation
 
 import requests as _requests
@@ -261,11 +262,20 @@ class ProcesarStreamView(APIView):
     """
     POST /api/facturacion/procesar/stream/
 
-    Proxy SSE: autentica con DRF y reenvía el stream de FactIA línea a línea.
+    Proxy SSE: autentica con DRF, reenvía el stream de FactIA y persiste
+    las facturas en la BD cuando detecta el evento 'result'.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        automation = _get_or_create_automation()
+        execution = Execution.objects.create(
+            automation=automation,
+            status='running',
+            start_time=timezone.now(),
+            triggered_by=request.user,
+        )
+
         factia_resp = _requests.post(
             f'{FACTIA_URL}/api/procesar/stream/',
             stream=True,
@@ -273,9 +283,51 @@ class ProcesarStreamView(APIView):
         )
 
         def event_gen():
+            pending_result = False
+
             for line in factia_resp.iter_lines():
-                if line:
-                    yield line.decode('utf-8', errors='replace') + '\n'
+                if not line:
+                    continue
+                decoded = line.decode('utf-8', errors='replace')
+
+                if decoded == 'event: result':
+                    pending_result = True
+
+                elif pending_result and decoded.startswith('data: '):
+                    # Persistir facturas en la BD antes de reenviar el evento
+                    try:
+                        data = json.loads(decoded[6:])
+                        for dato in data.get('facturas', []):
+                            try:
+                                FacturaElectronica.objects.update_or_create(
+                                    proveedor_nit=dato.get('proveedor_nit', ''),
+                                    numero_factura=dato.get('numero_factura', ''),
+                                    defaults={
+                                        'execution': execution,
+                                        'codigo': dato.get('codigo', ''),
+                                        'valor_factura': _to_decimal(dato.get('valor_factura')),
+                                        'iva_facturado_proveedor': _to_decimal(dato.get('iva_facturado_proveedor')),
+                                        'fecha_emision': dato.get('fecha_emision') or None,
+                                        'fecha_vencimiento': dato.get('fecha_vencimiento') or None,
+                                        'observaciones': dato.get('observaciones', ''),
+                                        'archivo': dato.get('archivo', ''),
+                                    },
+                                )
+                            except Exception:
+                                pass
+                        execution.status = 'success' if data.get('errores', 0) == 0 else 'failed'
+                    except Exception:
+                        execution.status = 'failed'
+                    execution.end_time = timezone.now()
+                    execution.save()
+                    pending_result = False
+
+                elif decoded.startswith('event: error'):
+                    execution.status = 'failed'
+                    execution.end_time = timezone.now()
+                    execution.save()
+
+                yield decoded + '\n'
 
         resp = StreamingHttpResponse(event_gen(), content_type='text/event-stream; charset=utf-8')
         resp['Cache-Control']      = 'no-cache'

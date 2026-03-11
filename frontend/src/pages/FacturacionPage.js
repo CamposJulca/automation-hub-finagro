@@ -422,6 +422,20 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const valorTotal    = totalValor(facturas);
   const valorFiltrado = totalValor(facturasFiltradas);
 
+  // Agrupar valor y conteo por mes (fecha_emision YYYY-MM)
+  const valorPorMes = (() => {
+    const mapa = {};
+    for (const f of facturas) {
+      const mes = f.fecha_emision ? f.fecha_emision.slice(0, 7) : 'sin-fecha';
+      if (!mapa[mes]) mapa[mes] = { valor: 0, count: 0 };
+      mapa[mes].valor += parseFloat(f.valor_factura) || 0;
+      mapa[mes].count += 1;
+    }
+    return Object.entries(mapa)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([mes, d]) => ({ mes, ...d }));
+  })();
+
   return (
     <div className="page">
 
@@ -460,7 +474,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
         {[
           { icon: '🧾', label: 'Total facturas',  value: total,                                                       bg: '#e3f2fd', color: '#1565c0' },
           { icon: '💰', label: 'Valor total',      value: valorTotal > 0 ? fmtCOP(valorTotal) : '—',                  bg: '#e8f5e9', color: '#2e7d32' },
@@ -475,6 +489,39 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           </div>
         ))}
       </div>
+
+      {/* Valor por mes */}
+      {valorPorMes.length > 0 && (() => {
+        const maxVal = Math.max(...valorPorMes.map(m => m.valor), 1);
+        return (
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
+              Valor facturado por mes
+            </div>
+            <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 4 }}>
+              {valorPorMes.map(({ mes, valor, count }) => {
+                const pct = Math.round((valor / maxVal) * 100);
+                const label = mes === 'sin-fecha' ? 'Sin fecha' : mesLabel(mes);
+                return (
+                  <div key={mes} className="card" style={{
+                    margin: 0, padding: '14px 18px', minWidth: 150, flex: '0 0 auto',
+                    display: 'flex', flexDirection: 'column', gap: 8,
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#1b5e20' }}>{label}</div>
+                    <div style={{ fontSize: 17, fontWeight: 800, color: '#1565c0', lineHeight: 1 }}>
+                      {'$' + Math.round(valor / 1_000_000).toLocaleString('es-CO') + 'M'}
+                    </div>
+                    <div style={{ background: '#f0f4ff', borderRadius: 4, height: 5, overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg,#1565c0,#64b5f6)', borderRadius: 4 }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: '#aaa' }}>{count} factura{count !== 1 ? 's' : ''}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Cobertura de descarga */}
       <div className="section-header" style={{ marginBottom: 12 }}>
