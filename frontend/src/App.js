@@ -45,7 +45,7 @@ function Layout() {
       <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="sidebar-logo-badge">
-            <div className="sidebar-logo-icon">🌿</div>
+            <div className="sidebar-logo-icon"><img src="/images/logo-finagro.png" alt="Finagro" style={{ width: 36, height: 36, objectFit: 'contain' }} /></div>
             {!collapsed && (
               <div className="sidebar-logo-text">
                 <h2>Automation Hub</h2>
