@@ -8,4 +8,5 @@ urlpatterns = [
     path('api/', include('logs.urls')),
     path('api/sarlaft/',      include('modules.sarlaft.urls')),
     path('api/facturacion/',  include('modules.facturacion.urls')),
+    path('api/icr/',          include('modules.icr.urls')),
 ]

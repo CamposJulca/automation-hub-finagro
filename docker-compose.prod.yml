@@ -60,7 +60,19 @@ services:
     networks:
       - finagro-net
 
-  # ── Frontend React + Nginx (5 puertos) ───────────────────────────────────────
+  # ── SIGA — Beneficios de Salud ───────────────────────────────────────────────
+  siga:
+    build:
+      context: ../siga
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - siga_db:/app/db
+      - siga_landing:/storage/landing
+    networks:
+      - finagro-net
+
+  # ── Frontend React + Nginx (6 puertos) ───────────────────────────────────────
   frontend:
     build:
       context: .
@@ -73,6 +85,7 @@ services:
       - "9004:9004"   # mesa-ayuda               → Módulo Mesa de Ayuda
     depends_on:
       - backend
+      - siga
     restart: unless-stopped
     networks:
       - finagro-net
@@ -80,3 +93,5 @@ services:
 volumes:
   postgres_data_prod:
   factia_data:
+  siga_db:
+  siga_landing:

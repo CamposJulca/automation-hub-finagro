@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'modules.mesa_ayuda',
     'modules.gestion_administrativa',
     'modules.sarlaft',
+    'modules.icr',
 ]
 
 MIDDLEWARE = [

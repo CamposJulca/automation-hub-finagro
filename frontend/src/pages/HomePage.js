@@ -25,6 +25,30 @@ const MODULES = [
     status: 'activo',
     route: '/facturacion',
   },
+  {
+    id: 'icr',
+    name: 'ICR',
+    fullName: 'Incentivo a la Capitalización Rural',
+    icon: '📊',
+    iconBg: '#f3f0e8',
+    description:
+      'Gestiona el ciclo de vida completo de las inscripciones ICR: importación de operaciones AGROS, evaluación de reglas de elegibilidad por bolsa, preinscripción, formalización y auditoría.',
+    processes: ['Importación AGROS', 'Evaluación de reglas', 'Formalización', 'Consecutivo'],
+    status: 'activo',
+    route: '/icr',
+  },
+  {
+    id: 'siga',
+    name: 'SIGA',
+    fullName: 'Sistema Inteligente de Gestión Administrativa',
+    icon: '🏥',
+    iconBg: '#fce4ec',
+    description:
+      'Automatiza la recepción y procesamiento de archivos Excel de beneficios de salud enviados por proveedores (AXA Colpatria, Colsanitas). Normaliza, valida y consolida la información en una base única.',
+    processes: ['Carga Excel', 'Detección proveedor', 'Normalización ETL', 'Trazabilidad'],
+    status: 'activo',
+    route: '/siga',
+  },
 ];
 
 const API_ENDPOINTS = [
@@ -34,6 +58,15 @@ const API_ENDPOINTS = [
   { method: 'POST', url: '/api/facturacion/descargar/',   desc: 'Descargar facturas desde buzón de correo' },
   { method: 'POST', url: '/api/facturacion/procesar/',    desc: 'Clasificar ZIPs y extraer metadata XML' },
   { method: 'GET',  url: '/api/facturacion/facturas/',    desc: 'Listar facturas procesadas' },
+  { method: 'GET',  url: '/api/icr/contratos/',           desc: 'Listar contratos ICR' },
+  { method: 'POST', url: '/api/icr/importar/',            desc: 'Importar operaciones AGROS (Excel/CSV)' },
+  { method: 'POST', url: '/api/icr/preinscribir/',        desc: 'Evaluar reglas y preinscribir operaciones' },
+  { method: 'POST', url: '/api/icr/formalizar/',          desc: 'Formalizar preinscripciones → inscrita' },
+  { method: 'GET',  url: '/api/icr/inscripciones/',       desc: 'Listar inscripciones ICR con filtros' },
+  { method: 'GET',  url: '/api/icr/stats/',               desc: 'KPIs y estadísticas del módulo ICR' },
+  { method: 'POST', url: '/siga-api/beneficios-salud/upload/',    desc: 'SIGA · Cargar y procesar archivo Excel de proveedor' },
+  { method: 'GET',  url: '/siga-api/beneficios-salud/archivos/',  desc: 'SIGA · Listar archivos de beneficios recibidos' },
+  { method: 'GET',  url: '/siga-api/beneficios-salud/beneficios/', desc: 'SIGA · Consultar beneficios procesados' },
 ];
 
 export default function HomePage() {
@@ -88,6 +121,13 @@ export default function HomePage() {
           <div className="info-card-text">
             <strong>FactIA</strong>
             <span>Facturación DIAN · Activo</span>
+          </div>
+        </div>
+        <div className="info-card">
+          <div className="info-card-icon" style={{ background: '#fce4ec' }}>🏥</div>
+          <div className="info-card-text">
+            <strong>SIGA</strong>
+            <span>Beneficios de Salud · Activo</span>
           </div>
         </div>
       </div>

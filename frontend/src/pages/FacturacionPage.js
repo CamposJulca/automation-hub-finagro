@@ -54,6 +54,132 @@ async function consumeSSE(url, { method = 'POST', headers = {}, body = null, onL
   }
 }
 
+/* ── Modal: facturas sin fecha emisión ───────────────────────────────────── */
+function SinFechaModal({ facturas, onClose }) {
+  const sinFecha = facturas.filter(f => !f.fecha_emision);
+
+  // Extrae el nombre del ZIP origen a partir de la ruta del XML:
+  // archivo = "historico_2026/.../semana_01/CARPETA/file.xml"
+  // ZIP origen = "CARPETA.zip"  (carpeta padre del XML = nombre del ZIP)
+  function zipOrigen(archivo) {
+    if (!archivo) return '—';
+    const parts = archivo.replace(/\\/g, '/').split('/');
+    if (parts.length < 2) return archivo;
+    const carpeta = parts[parts.length - 2];
+    return carpeta ? `${carpeta}.zip` : archivo;
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+      zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      backdropFilter: 'blur(2px)',
+    }} onClick={onClose}>
+      <div style={{
+        width: '90%', maxWidth: 820,
+        background: '#fff', borderRadius: 12,
+        boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        overflow: 'hidden',
+        maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+      }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{
+          padding: '16px 24px',
+          background: 'linear-gradient(135deg, #fff8e1, #ffe082)',
+          borderBottom: '1px solid #ffd54f',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ fontSize: 24 }}>⚠️</div>
+            <div>
+              <div style={{ fontWeight: 800, color: '#e65100', fontSize: 15 }}>
+                {sinFecha.length} factura{sinFecha.length !== 1 ? 's' : ''} sin fecha de emisión
+              </div>
+              <div style={{ fontSize: 11, color: '#bf360c', marginTop: 2 }}>
+                Estas facturas no pudieron correlacionarse con un correo en el histórico descargado
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: '1px solid #ffb74d',
+            borderRadius: 8, padding: '6px 14px', cursor: 'pointer',
+            fontSize: 12, fontWeight: 700, color: '#e65100',
+          }}>Cerrar</button>
+        </div>
+
+        {/* Tabla */}
+        <div style={{ overflowY: 'auto', flex: 1 }}>
+          {sinFecha.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#aaa' }}>
+              No hay facturas sin fecha de emisión.
+            </div>
+          ) : (
+            <table className="api-table" style={{ margin: 0 }}>
+              <thead>
+                <tr>
+                  <th>NIT Proveedor</th>
+                  <th>Número Factura</th>
+                  <th style={{ textAlign: 'right' }}>Valor</th>
+                  <th>Correo origen (ZIP)</th>
+                  <th>Observaciones</th>
+                  <th>Procesado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sinFecha.map((f, i) => (
+                  <tr key={f.id || i} style={{ background: '#fffde7' }}>
+                    <td>
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, background: '#fff3e0', padding: '2px 6px', borderRadius: 4, color: '#e65100', fontWeight: 700 }}>
+                        {f.proveedor_nit || '—'}
+                      </span>
+                    </td>
+                    <td style={{ fontWeight: 700, color: '#1b5e20' }}>{f.numero_factura || '—'}</td>
+                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#1565c0' }}>
+                      {fmtCOP(f.valor_factura)}
+                    </td>
+                    <td>
+                      <span style={{
+                        fontFamily: 'monospace', fontSize: 11,
+                        background: '#fce4ec', color: '#880e4f',
+                        padding: '3px 8px', borderRadius: 4,
+                        wordBreak: 'break-all', display: 'inline-block',
+                      }}>
+                        {zipOrigen(f.archivo)}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: 12, color: '#666', fontStyle: f.observaciones?.includes('***') ? 'italic' : 'normal' }}>
+                      {f.observaciones || '—'}
+                    </td>
+                    <td style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
+                      {f.procesado_en ? new Date(f.procesado_en).toLocaleString('es-CO', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: '12px 24px', borderTop: '1px solid #f0f0f0',
+          background: '#fafafa', fontSize: 11, color: '#999',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <span>
+            El ZIP origen se deriva de la carpeta del XML en el histórico.
+            Verifica que ese ZIP exista en <code style={{ background: '#f0f0f0', padding: '1px 4px', borderRadius: 3 }}>procesados.json</code>.
+          </span>
+          <span style={{ fontWeight: 700, color: '#e65100' }}>
+            {sinFecha.length} sin fecha
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Modal de progreso ───────────────────────────────────────────────────── */
 function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, aborting }) {
   const bottomRef = useRef(null);
@@ -275,6 +401,13 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const [stats, setStats]           = useState(null);
   const [loadingStats, setLoadingStats] = useState(false);
 
+  // Cron log
+  const [cronLog, setCronLog] = useState([]);
+
+  // Descarga de PDFs por semana
+  const [semanas, setSemanas] = useState([]);
+  const [descargandoSemana, setDescargandoSemana] = useState(null); // key de la semana en descarga
+
   // Estado independiente por paso
   const [descargando, setDescargando]         = useState(false);
   const [procesando, setProcesando]           = useState(false);
@@ -282,6 +415,9 @@ function FacturacionDashboard({ authHeader, onLogout }) {
 
   // Modal de logs
   const [modal, setModal] = useState(null);
+
+  // Modal advertencias sin fecha
+  const [verSinFecha, setVerSinFecha] = useState(false);
   // modal = { title, subtitle, logs: [], isDone: bool, status: 'running'|'ok'|'error' }
 
   const cargarStats = useCallback(async () => {
@@ -291,6 +427,48 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       if (res.ok) setStats(await res.json());
     } catch { /* silencioso */ }
     finally { setLoadingStats(false); }
+  }, [authHeader]);
+
+  const cargarSemanas = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/facturacion/semanas/`, { headers: { Authorization: authHeader } });
+      if (res.ok) {
+        const data = await res.json();
+        setSemanas(data.semanas || []);
+      }
+    } catch { /* silencioso */ }
+  }, [authHeader]);
+
+  const descargarPDFs = async (semanaKey) => {
+    setDescargandoSemana(semanaKey);
+    try {
+      const res = await fetch(
+        `${API}/facturacion/descargar-pdfs/?semana=${encodeURIComponent(semanaKey)}`,
+        { headers: { Authorization: authHeader } }
+      );
+      if (!res.ok) { alert(`Error ${res.status} al preparar la descarga.`); return; }
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = href;
+      a.download = `PDFs_${semanaKey.replace(/\//g, '_')}.zip`;
+      a.click();
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setDescargandoSemana(null);
+    }
+  };
+
+  const cargarCronLog = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/facturacion/cron-log/`, { headers: { Authorization: authHeader } });
+      if (res.ok) {
+        const data = await res.json();
+        setCronLog(data.runs || []);
+      }
+    } catch { /* silencioso */ }
   }, [authHeader]);
 
   const cargarFacturas = useCallback(async () => {
@@ -305,7 +483,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
     finally { setLoadingFacturas(false); }
   }, [authHeader, onLogout]);
 
-  useEffect(() => { cargarFacturas(); cargarStats(); }, [cargarFacturas, cargarStats]);
+  useEffect(() => { cargarFacturas(); cargarStats(); cargarCronLog(); cargarSemanas(); }, [cargarFacturas, cargarStats, cargarCronLog, cargarSemanas]);
 
   const abortar = async () => {
     setAborting(true);
@@ -446,6 +624,11 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   return (
     <div className="page">
 
+      {/* Modal: facturas sin fecha */}
+      {verSinFecha && (
+        <SinFechaModal facturas={facturas} onClose={() => setVerSinFecha(false)} />
+      )}
+
       {/* Modal de progreso */}
       {modal && (
         <LogModal
@@ -481,21 +664,57 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
-        {[
-          { icon: '🧾', label: 'Total facturas',  value: total,                                                       bg: '#e3f2fd', color: '#1565c0' },
-          { icon: '💰', label: 'Valor total',      value: valorTotal > 0 ? fmtCOP(valorTotal) : '—',                  bg: '#e8f5e9', color: '#2e7d32' },
-          { icon: '⚠️', label: 'Sin fecha emisión',value: facturas.filter(f => !f.fecha_emision).length || '—',        bg: '#fff8e1', color: '#f57f17' },
-        ].map(k => (
-          <div key={k.label} className="card" style={{ margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ width: 48, height: 48, borderRadius: 12, background: k.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>{k.icon}</div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: k.color, lineHeight: 1.1 }}>{k.value}</div>
-              <div style={{ fontSize: 11, color: '#888', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{k.label}</div>
+      {(() => {
+        const sinFechaCount = facturas.filter(f => !f.fecha_emision).length;
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+            {[
+              { icon: '🧾', label: 'Total facturas', value: total,                              bg: '#e3f2fd', color: '#1565c0' },
+              { icon: '💰', label: 'Valor total',     value: valorTotal > 0 ? fmtCOP(valorTotal) : '—', bg: '#e8f5e9', color: '#2e7d32' },
+            ].map(k => (
+              <div key={k.label} className="card" style={{ margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{ width: 48, height: 48, borderRadius: 12, background: k.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>{k.icon}</div>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: k.color, lineHeight: 1.1 }}>{k.value}</div>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{k.label}</div>
+                </div>
+              </div>
+            ))}
+
+            {/* Tarjeta de advertencia — botón si hay facturas sin fecha */}
+            <div className="card" style={{
+              margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16,
+              ...(sinFechaCount > 0 ? { cursor: 'pointer', border: '1.5px solid #ffe082' } : {}),
+            }}
+              onClick={sinFechaCount > 0 ? () => setVerSinFecha(true) : undefined}
+              title={sinFechaCount > 0 ? 'Haz clic para ver las facturas sin fecha de emisión' : undefined}
+            >
+              <div style={{
+                width: 48, height: 48, borderRadius: 12, background: sinFechaCount > 0 ? '#fff8e1' : '#f5f5f5',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0,
+              }}>
+                {sinFechaCount > 0 ? '⚠️' : '✅'}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: sinFechaCount > 0 ? '#f57f17' : '#aaa', lineHeight: 1.1 }}>
+                  {sinFechaCount > 0 ? sinFechaCount : '—'}
+                </div>
+                <div style={{ fontSize: 11, color: '#888', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Sin fecha emisión
+                </div>
+              </div>
+              {sinFechaCount > 0 && (
+                <div style={{
+                  background: '#fff3e0', color: '#e65100', fontSize: 11, fontWeight: 700,
+                  padding: '4px 10px', borderRadius: 20, whiteSpace: 'nowrap',
+                }}>
+                  Ver correos →
+                </div>
+              )}
             </div>
           </div>
-        ))}
-      </div>
+        );
+      })()}
 
       {/* Valor por mes */}
       {valorPorMes.length > 0 && (() => {
@@ -529,6 +748,77 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           </div>
         );
       })()}
+
+      {/* ── Tareas programadas ── */}
+      <div className="section-header" style={{ marginBottom: 12 }}>
+        <div className="section-title">Tareas programadas</div>
+        <div style={{ fontSize: 11, color: '#888' }}>Lunes a viernes · Automático</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
+        {[
+          { slot: '06:00', label: '6:00 AM',  icon: '🌅', desc: 'Inicio de jornada' },
+          { slot: '11:00', label: '11:00 AM', icon: '☀️',  desc: 'Media mañana' },
+          { slot: '16:00', label: '4:00 PM',  icon: '🌆', desc: 'Cierre de tarde' },
+        ].map(({ slot, label, icon, desc }) => {
+          const ultima = cronLog.find(r => r.hora_slot === slot);
+          const ok = ultima?.status === 'ok';
+          return (
+            <div key={slot} className="card" style={{ margin: 0, overflow: 'hidden' }}>
+              <div style={{
+                background: ultima
+                  ? (ok ? 'linear-gradient(135deg,#e8f5e9,#c8e6c9)' : 'linear-gradient(135deg,#ffebee,#ffcdd2)')
+                  : 'linear-gradient(135deg,#fafafa,#f0f0f0)',
+                padding: '14px 18px', borderBottom: '1px solid rgba(0,0,0,0.05)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 20 }}>{icon}</span>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: '#1a2e1a' }}>{label}</div>
+                    <div style={{ fontSize: 10, color: '#888' }}>{desc}</div>
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
+                  background: ultima ? (ok ? '#2e7d32' : '#c62828') : '#e0e0e0',
+                  color: ultima ? '#fff' : '#aaa',
+                }}>
+                  {ultima ? (ok ? '✓ OK' : '✗ ERROR') : 'Pendiente'}
+                </span>
+              </div>
+              <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {ultima ? (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: '#888' }}>Última ejecución</span>
+                      <span style={{ fontWeight: 600, color: '#333' }}>
+                        {new Date(ultima.timestamp).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: '#888' }}>Mensajes procesados</span>
+                      <span style={{ fontWeight: 700, color: '#1565c0' }}>{ultima.mensajes_procesados ?? 0}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 12, color: '#bbb', textAlign: 'center', padding: '6px 0' }}>
+                    Sin ejecuciones registradas
+                  </div>
+                )}
+                <button
+                  className="btn btn-outline"
+                  onClick={() => descargarConFecha('', '')}
+                  disabled={descargando}
+                  style={{ fontSize: 11, marginTop: 4, color: '#1565c0', borderColor: '#90caf9' }}
+                >
+                  {descargando ? <span style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}><SpinnerIcon color="#1565c0" size={11} /> Ejecutando...</span> : '▶ Ejecutar ahora'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
       {/* Cobertura de descarga */}
       <div className="section-header" style={{ marginBottom: 12 }}>
@@ -603,28 +893,137 @@ function FacturacionDashboard({ authHeader, onLogout }) {
               </table>
             </div>
 
-            {/* Acceso rápido diario */}
-            <div style={{ padding: '20px 24px', borderLeft: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, minWidth: 180 }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 28, marginBottom: 4 }}>📅</div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>Descarga diaria</div>
-                <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>Descarga los correos<br/>del día anterior</div>
+            {/* Tareas programadas — resumen lateral */}
+            <div style={{ padding: '16px 20px', borderLeft: '1px solid #f0f0f0', minWidth: 220 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>
+                Tareas programadas
               </div>
+              {[
+                { slot: '06:00', label: '6:00 AM' },
+                { slot: '11:00', label: '11:00 AM' },
+                { slot: '16:00', label: '4:00 PM' },
+              ].map(({ slot, label }) => {
+                const ultima = cronLog.find(r => r.hora_slot === slot);
+                const ok = ultima?.status === 'ok';
+                return (
+                  <div key={slot} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 0', borderBottom: '1px solid #f5f5f5',
+                  }}>
+                    <div style={{
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      background: ultima ? (ok ? '#4caf50' : '#ef5350') : '#e0e0e0',
+                    }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#333' }}>{label}</div>
+                      <div style={{ fontSize: 10, color: '#aaa' }}>
+                        {ultima
+                          ? `Última: ${new Date(ultima.timestamp).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · ${ultima.mensajes_procesados ?? 0} msgs`
+                          : 'Sin ejecuciones registradas'}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20,
+                      background: ultima ? (ok ? '#e8f5e9' : '#ffebee') : '#f5f5f5',
+                      color: ultima ? (ok ? '#2e7d32' : '#c62828') : '#bbb',
+                    }}>
+                      {ultima ? (ok ? 'OK' : 'ERROR') : '—'}
+                    </span>
+                  </div>
+                );
+              })}
               <button
-                className="btn btn-primary"
-                onClick={descargarAyer}
-                disabled={descargando}
-                style={{ width: '100%', fontWeight: 700, fontSize: 13, padding: '10px 0' }}
+                className="btn btn-outline"
+                onClick={cargarCronLog}
+                style={{ width: '100%', marginTop: 12, fontSize: 11 }}
               >
-                {descargando
-                  ? <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}><SpinnerIcon /> Descargando...</span>
-                  : '⬇ Descargar ayer'}
+                ↺ Actualizar estado
               </button>
-              <div style={{ fontSize: 10, color: '#bbb', textAlign: 'center' }}>
-                {toISODate(new Date(Date.now() - 86400000))}
-              </div>
             </div>
           </div>
+        )}
+      </div>
+
+      {/* ── Descarga de PDFs por semana ── */}
+      <div className="section-header" style={{ marginBottom: 12 }}>
+        <div className="section-title">Descargar PDFs por semana</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-outline" style={{ fontSize: 11 }} onClick={cargarSemanas}>↺</button>
+          <a
+            href={`${API}/facturacion/descargar-instalador/`}
+            download="InstaladorFacturas.bat"
+            className="btn btn-primary"
+            style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            ⬇ Descargar instalador (.bat)
+          </a>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 28, padding: 0, overflow: 'hidden' }}>
+        {/* Cabecera descriptiva */}
+        <div style={{ padding: '16px 24px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 14, background: 'linear-gradient(135deg,#e8f5e9,#f1f8e9)' }}>
+          <div style={{ fontSize: 28 }}>📄</div>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#1b5e20' }}>Solo PDFs · renombrados por fecha de emisión</div>
+            <div style={{ fontSize: 11.5, color: '#388e3c', marginTop: 2 }}>
+              Cada ZIP contiene los PDFs de esa semana nombrados como <code style={{ background: '#c8e6c9', padding: '1px 5px', borderRadius: 4 }}>YYYY-MM-DD_NIT_NumFactura.pdf</code>
+            </div>
+          </div>
+          <div style={{ marginLeft: 'auto', fontSize: 11, color: '#666', textAlign: 'right' }}>
+            <strong>{semanas.reduce((s, w) => s + w.total_zips, 0)}</strong> facturas<br/>
+            <strong>{semanas.length}</strong> semanas
+          </div>
+        </div>
+
+        {/* Tabla de semanas */}
+        {semanas.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: '#aaa', fontSize: 13 }}>
+            Cargando semanas disponibles...
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: '#fafafa', borderBottom: '2px solid #e8f5e9' }}>
+                <th style={{ padding: '10px 20px', textAlign: 'left', fontWeight: 700, color: '#555', width: 80 }}>Año</th>
+                <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#555', width: 160 }}>Mes</th>
+                <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#555' }}>Semana</th>
+                <th style={{ padding: '10px 16px', textAlign: 'center', fontWeight: 700, color: '#555', width: 100 }}>PDFs</th>
+                <th style={{ padding: '10px 20px', textAlign: 'center', fontWeight: 700, color: '#555', width: 180 }}>Descarga</th>
+              </tr>
+            </thead>
+            <tbody>
+              {semanas.map((sem, idx) => {
+                const isDesc = descargandoSemana === sem.key;
+                const mesLabel = sem.mes.replace(/^\d+_/, '').replace(/^\w/, c => c.toUpperCase());
+                const semLabel = sem.semana.replace('semana_', 'Semana ');
+                return (
+                  <tr key={sem.key} style={{ borderBottom: '1px solid #f5f5f5', background: idx % 2 === 0 ? '#fff' : '#fafff9' }}>
+                    <td style={{ padding: '11px 20px', fontWeight: 700, color: '#333' }}>{sem.year}</td>
+                    <td style={{ padding: '11px 16px', color: '#555' }}>{mesLabel}</td>
+                    <td style={{ padding: '11px 16px', color: '#555' }}>{semLabel}</td>
+                    <td style={{ padding: '11px 16px', textAlign: 'center' }}>
+                      <span style={{ background: '#e8f5e9', color: '#2e7d32', borderRadius: 20, padding: '3px 12px', fontSize: 12, fontWeight: 700 }}>
+                        {sem.total_zips}
+                      </span>
+                    </td>
+                    <td style={{ padding: '11px 20px', textAlign: 'center' }}>
+                      <button
+                        className="btn btn-primary"
+                        disabled={isDesc || descargandoSemana !== null}
+                        onClick={() => descargarPDFs(sem.key)}
+                        style={{ fontSize: 12, padding: '7px 18px', fontWeight: 700, minWidth: 140 }}
+                      >
+                        {isDesc
+                          ? <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}><SpinnerIcon size={14} /> Preparando...</span>
+                          : '⬇ Descargar PDFs'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </div>
 
