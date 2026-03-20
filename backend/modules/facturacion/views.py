@@ -1,4 +1,5 @@
 import json
+import os
 from decimal import Decimal, InvalidOperation
 
 import requests as _requests
@@ -6,7 +7,7 @@ import requests as _requests
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
@@ -183,7 +184,10 @@ class ListarFacturasView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        facturas = FacturaElectronica.objects.all()
+        from django.db.models import F
+        facturas = FacturaElectronica.objects.all().order_by(
+            F('fecha_emision').desc(nulls_last=True), '-procesado_en'
+        )
         serializer = FacturaElectronicaSerializer(facturas, many=True)
         return Response({'facturas': serializer.data, 'total': facturas.count()})
 
@@ -265,6 +269,67 @@ class InfoCarpetasView(APIView):
             return Response(resp.json())
         except Exception as exc:
             return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class SincronizarCronView(APIView):
+    """
+    POST /api/facturacion/sincronizar-cron/
+    Llamado internamente por el scheduler de FactIA tras cada job automático.
+    Autenticación: header X-Cron-Token con el token configurado en CRON_INTERNAL_TOKEN.
+    Lee facturas_metadata.json desde FactIA (sin re-procesar) y las persiste en la BD.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        token    = request.headers.get('X-Cron-Token', '')
+        expected = os.getenv('CRON_INTERNAL_TOKEN', '')
+        if not expected or token != expected:
+            return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        automation = _get_or_create_automation()
+        execution  = Execution.objects.create(
+            automation=automation,
+            status='running',
+            start_time=timezone.now(),
+            triggered_by=None,
+        )
+
+        try:
+            resp = _requests.get(f'{FACTIA_URL}/api/facturas/', timeout=30)
+            resp.raise_for_status()
+            facturas_data = resp.json().get('facturas', [])
+        except Exception as exc:
+            execution.status   = 'failed'
+            execution.end_time = timezone.now()
+            execution.save()
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        guardadas = 0
+        for dato in facturas_data:
+            try:
+                FacturaElectronica.objects.update_or_create(
+                    proveedor_nit=dato.get('proveedor_nit', ''),
+                    numero_factura=dato.get('numero_factura', ''),
+                    defaults={
+                        'execution':               execution,
+                        'codigo':                  dato.get('codigo', ''),
+                        'valor_factura':           _to_decimal(dato.get('valor_factura')),
+                        'iva_facturado_proveedor': _to_decimal(dato.get('iva_facturado_proveedor')),
+                        'fecha_emision':           dato.get('fecha_emision') or None,
+                        'fecha_vencimiento':       dato.get('fecha_vencimiento') or None,
+                        'observaciones':           dato.get('observaciones', ''),
+                        'archivo':                 dato.get('archivo', ''),
+                    },
+                )
+                guardadas += 1
+            except Exception:
+                pass
+
+        execution.status   = 'success'
+        execution.end_time = timezone.now()
+        execution.save()
+        return Response({'total': guardadas}, status=status.HTTP_200_OK)
 
 
 class CronLogView(APIView):
@@ -501,18 +566,38 @@ class DescargarScriptView(APIView):
 class DescargarInstaladorView(APIView):
     """
     GET /api/facturacion/descargar-instalador/
-    Genera y sirve el instalador .bat con la URL del servidor actual.
+    Sirve SincronizarFacturas.exe si fue compilado (build.sh).
+    Si el .exe no existe aún, sirve el InstaladorFacturas.bat como fallback.
     No requiere autenticacion.
     """
     permission_classes = []
 
     def get(self, request):
-        from django.http import HttpResponse
-        scheme = request.META.get('HTTP_X_FORWARDED_PROTO', request.scheme)
-        host   = request.META.get('HTTP_X_FORWARDED_HOST', request.get_host())
+        from django.http import HttpResponse, StreamingHttpResponse
+        # Intentar servir el .exe desde FactIA
+        try:
+            factia_resp = _requests.get(
+                f'{FACTIA_URL}/api/descargar-exe/',
+                stream=True, timeout=30,
+            )
+            if factia_resp.status_code == 200:
+                resp = StreamingHttpResponse(
+                    factia_resp.iter_content(chunk_size=65536),
+                    content_type='application/octet-stream',
+                )
+                resp['Content-Disposition'] = 'attachment; filename="SincronizarFacturas.exe"'
+                if 'Content-Length' in factia_resp.headers:
+                    resp['Content-Length'] = factia_resp.headers['Content-Length']
+                return resp
+        except Exception:
+            pass
+
+        # Fallback: .bat que descarga y ejecuta el PS1
+        scheme     = request.META.get('HTTP_X_FORWARDED_PROTO', request.scheme)
+        host       = request.META.get('HTTP_X_FORWARDED_HOST', request.get_host())
         script_url = f'{scheme}://{host}/api/facturacion/descargar-script/'
-        content = _bat_content(script_url)
-        resp = HttpResponse(content.encode('ascii'), content_type='application/octet-stream')
+        content    = _bat_content(script_url)
+        resp       = HttpResponse(content.encode('ascii'), content_type='application/octet-stream')
         resp['Content-Disposition'] = 'attachment; filename="InstaladorFacturas.bat"'
         return resp
 

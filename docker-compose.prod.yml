@@ -35,6 +35,7 @@ services:
     env_file: .env.prod
     environment:
       FACTIA_DATA_DIR: /data/factia
+      BACKEND_URL:     http://backend:8000
     volumes:
       - factia_data:/data/factia
     networks:

@@ -394,6 +394,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const [total, setTotal]                     = useState(0);
   const [loadingFacturas, setLoadingFacturas] = useState(false);
   const [busqueda, setBusqueda]               = useState('');
+  const [limite, setLimite]                   = useState(10);
   const [fechaDesde, setFechaDesde]           = useState('');
   const [fechaHasta, setFechaHasta]           = useState('');
 
@@ -667,10 +668,11 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       {(() => {
         const sinFechaCount = facturas.filter(f => !f.fecha_emision).length;
         return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
             {[
-              { icon: '🧾', label: 'Total facturas', value: total,                              bg: '#e3f2fd', color: '#1565c0' },
-              { icon: '💰', label: 'Valor total',     value: valorTotal > 0 ? fmtCOP(valorTotal) : '—', bg: '#e8f5e9', color: '#2e7d32' },
+              { icon: '🧾', label: 'Total facturas',      value: total,                                         bg: '#e3f2fd', color: '#1565c0' },
+              { icon: '📦', label: 'Facturas en FactIA',  value: stats?.total_facturas_extraidas ?? '—',        bg: '#f3e5f5', color: '#6a1b9a' },
+              { icon: '💰', label: 'Valor total',          value: valorTotal > 0 ? fmtCOP(valorTotal) : '—',    bg: '#e8f5e9', color: '#2e7d32' },
             ].map(k => (
               <div key={k.label} className="card" style={{ margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div style={{ width: 48, height: 48, borderRadius: 12, background: k.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>{k.icon}</div>
@@ -797,23 +799,26 @@ function FacturacionDashboard({ authHeader, onLogout }) {
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                      <span style={{ color: '#888' }}>Mensajes procesados</span>
+                      <span style={{ color: '#888' }}>Correos encontrados</span>
                       <span style={{ fontWeight: 700, color: '#1565c0' }}>{ultima.mensajes_procesados ?? 0}</span>
                     </div>
+                    {ultima.facturas_guardadas != null && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                        <span style={{ color: '#888' }}>Facturas guardadas</span>
+                        <span style={{ fontWeight: 700, color: '#2e7d32' }}>{ultima.facturas_guardadas}</span>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div style={{ fontSize: 12, color: '#bbb', textAlign: 'center', padding: '6px 0' }}>
                     Sin ejecuciones registradas
                   </div>
                 )}
-                <button
-                  className="btn btn-outline"
-                  onClick={() => descargarConFecha('', '')}
-                  disabled={descargando}
-                  style={{ fontSize: 11, marginTop: 4, color: '#1565c0', borderColor: '#90caf9' }}
-                >
-                  {descargando ? <span style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}><SpinnerIcon color="#1565c0" size={11} /> Ejecutando...</span> : '▶ Ejecutar ahora'}
-                </button>
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 6, textAlign: 'center', borderTop: '1px solid #f5f5f5', paddingTop: 6 }}>
+                  {slot === '06:00' ? 'Rango: 4 PM ayer → 6 AM hoy' :
+                   slot === '11:00' ? 'Rango: 6 AM → 11 AM hoy' :
+                   'Rango: 11 AM → 4 PM hoy'}
+                </div>
               </div>
             </div>
           );
@@ -850,7 +855,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
             No se han descargado correos todavía.
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'start' }}>
+          <div>
             {/* Tabla por mes */}
             <div style={{ overflowX: 'auto' }}>
               <table className="api-table" style={{ margin: 0 }}>
@@ -889,148 +894,42 @@ function FacturacionDashboard({ authHeader, onLogout }) {
                       {fmtFecha(stats.fecha_min)} → {fmtFecha(stats.fecha_max)}
                     </td>
                   </tr>
+                  <tr style={{ background: '#fafafa' }}>
+                    <td colSpan={4} style={{ fontSize: 11, color: '#666', padding: '8px 12px' }}>
+                      <span style={{ marginRight: 16 }}>
+                        <strong style={{ color: '#1565c0' }}>{stats.total_zips}</strong> ZIPs descargados
+                      </span>
+                      <span style={{ color: '#aaa', marginRight: 16 }}>→</span>
+                      <span style={{ marginRight: 16 }}>
+                        <strong style={{ color: '#6a1b9a' }}>{stats.total_facturas_extraidas ?? '—'}</strong> facturas extraídas por FactIA
+                      </span>
+                      <span style={{ color: '#aaa', marginRight: 16 }}>→</span>
+                      <span>
+                        <strong style={{ color: '#2e7d32' }}>{total}</strong> guardadas en BD
+                      </span>
+                    </td>
+                  </tr>
                 </tfoot>
               </table>
             </div>
-
-            {/* Tareas programadas — resumen lateral */}
-            <div style={{ padding: '16px 20px', borderLeft: '1px solid #f0f0f0', minWidth: 220 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>
-                Tareas programadas
-              </div>
-              {[
-                { slot: '06:00', label: '6:00 AM' },
-                { slot: '11:00', label: '11:00 AM' },
-                { slot: '16:00', label: '4:00 PM' },
-              ].map(({ slot, label }) => {
-                const ultima = cronLog.find(r => r.hora_slot === slot);
-                const ok = ultima?.status === 'ok';
-                return (
-                  <div key={slot} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 0', borderBottom: '1px solid #f5f5f5',
-                  }}>
-                    <div style={{
-                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                      background: ultima ? (ok ? '#4caf50' : '#ef5350') : '#e0e0e0',
-                    }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#333' }}>{label}</div>
-                      <div style={{ fontSize: 10, color: '#aaa' }}>
-                        {ultima
-                          ? `Última: ${new Date(ultima.timestamp).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · ${ultima.mensajes_procesados ?? 0} msgs`
-                          : 'Sin ejecuciones registradas'}
-                      </div>
-                    </div>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20,
-                      background: ultima ? (ok ? '#e8f5e9' : '#ffebee') : '#f5f5f5',
-                      color: ultima ? (ok ? '#2e7d32' : '#c62828') : '#bbb',
-                    }}>
-                      {ultima ? (ok ? 'OK' : 'ERROR') : '—'}
-                    </span>
-                  </div>
-                );
-              })}
-              <button
-                className="btn btn-outline"
-                onClick={cargarCronLog}
-                style={{ width: '100%', marginTop: 12, fontSize: 11 }}
-              >
-                ↺ Actualizar estado
-              </button>
-            </div>
           </div>
-        )}
-      </div>
-
-      {/* ── Descarga de PDFs por semana ── */}
-      <div className="section-header" style={{ marginBottom: 12 }}>
-        <div className="section-title">Descargar PDFs por semana</div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn btn-outline" style={{ fontSize: 11 }} onClick={cargarSemanas}>↺</button>
-          <a
-            href={`${API}/facturacion/descargar-instalador/`}
-            download="InstaladorFacturas.bat"
-            className="btn btn-primary"
-            style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
-          >
-            ⬇ Descargar instalador (.bat)
-          </a>
-        </div>
-      </div>
-
-      <div className="card" style={{ marginBottom: 28, padding: 0, overflow: 'hidden' }}>
-        {/* Cabecera descriptiva */}
-        <div style={{ padding: '16px 24px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 14, background: 'linear-gradient(135deg,#e8f5e9,#f1f8e9)' }}>
-          <div style={{ fontSize: 28 }}>📄</div>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 14, color: '#1b5e20' }}>Solo PDFs · renombrados por fecha de emisión</div>
-            <div style={{ fontSize: 11.5, color: '#388e3c', marginTop: 2 }}>
-              Cada ZIP contiene los PDFs de esa semana nombrados como <code style={{ background: '#c8e6c9', padding: '1px 5px', borderRadius: 4 }}>YYYY-MM-DD_NIT_NumFactura.pdf</code>
-            </div>
-          </div>
-          <div style={{ marginLeft: 'auto', fontSize: 11, color: '#666', textAlign: 'right' }}>
-            <strong>{semanas.reduce((s, w) => s + w.total_zips, 0)}</strong> facturas<br/>
-            <strong>{semanas.length}</strong> semanas
-          </div>
-        </div>
-
-        {/* Tabla de semanas */}
-        {semanas.length === 0 ? (
-          <div style={{ padding: 32, textAlign: 'center', color: '#aaa', fontSize: 13 }}>
-            Cargando semanas disponibles...
-          </div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#fafafa', borderBottom: '2px solid #e8f5e9' }}>
-                <th style={{ padding: '10px 20px', textAlign: 'left', fontWeight: 700, color: '#555', width: 80 }}>Año</th>
-                <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#555', width: 160 }}>Mes</th>
-                <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#555' }}>Semana</th>
-                <th style={{ padding: '10px 16px', textAlign: 'center', fontWeight: 700, color: '#555', width: 100 }}>PDFs</th>
-                <th style={{ padding: '10px 20px', textAlign: 'center', fontWeight: 700, color: '#555', width: 180 }}>Descarga</th>
-              </tr>
-            </thead>
-            <tbody>
-              {semanas.map((sem, idx) => {
-                const isDesc = descargandoSemana === sem.key;
-                const mesLabel = sem.mes.replace(/^\d+_/, '').replace(/^\w/, c => c.toUpperCase());
-                const semLabel = sem.semana.replace('semana_', 'Semana ');
-                return (
-                  <tr key={sem.key} style={{ borderBottom: '1px solid #f5f5f5', background: idx % 2 === 0 ? '#fff' : '#fafff9' }}>
-                    <td style={{ padding: '11px 20px', fontWeight: 700, color: '#333' }}>{sem.year}</td>
-                    <td style={{ padding: '11px 16px', color: '#555' }}>{mesLabel}</td>
-                    <td style={{ padding: '11px 16px', color: '#555' }}>{semLabel}</td>
-                    <td style={{ padding: '11px 16px', textAlign: 'center' }}>
-                      <span style={{ background: '#e8f5e9', color: '#2e7d32', borderRadius: 20, padding: '3px 12px', fontSize: 12, fontWeight: 700 }}>
-                        {sem.total_zips}
-                      </span>
-                    </td>
-                    <td style={{ padding: '11px 20px', textAlign: 'center' }}>
-                      <button
-                        className="btn btn-primary"
-                        disabled={isDesc || descargandoSemana !== null}
-                        onClick={() => descargarPDFs(sem.key)}
-                        style={{ fontSize: 12, padding: '7px 18px', fontWeight: 700, minWidth: 140 }}
-                      >
-                        {isDesc
-                          ? <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}><SpinnerIcon size={14} /> Preparando...</span>
-                          : '⬇ Descargar PDFs'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
         )}
       </div>
 
       {/* Pipeline */}
       <div className="section-header">
         <div className="section-title">Pipeline de procesamiento</div>
-        <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={onLogout}>Cerrar sesión</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <a
+            href={`${API}/facturacion/descargar-instalador/`}
+            download
+            className="btn btn-primary"
+            style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            ⬇ Descargar SincronizarFacturas.exe
+          </a>
+          <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={onLogout}>Cerrar sesión</button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 28 }}>
@@ -1107,7 +1006,12 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       <div className="section-header">
         <div className="section-title">Facturas extraídas ({total})</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input className="input" placeholder="Buscar NIT, número, código..." value={busqueda} onChange={e => setBusqueda(e.target.value)} style={{ fontSize: 12, padding: '6px 12px', width: 220 }} />
+          <input className="input" placeholder="Buscar NIT, número, código..." value={busqueda} onChange={e => { setBusqueda(e.target.value); setLimite(10); }} style={{ fontSize: 12, padding: '6px 12px', width: 220 }} />
+          <select value={limite} onChange={e => setLimite(Number(e.target.value))} className="input" style={{ fontSize: 12, padding: '6px 10px', width: 90 }}>
+            <option value={10}>10</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
           <button className="btn btn-outline" onClick={cargarFacturas} disabled={loadingFacturas} style={{ fontSize: 12 }}>
             {loadingFacturas ? 'Actualizando...' : '↺ Actualizar'}
           </button>
@@ -1130,9 +1034,12 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           </div>
         ) : (
           <>
-            {busqueda && (
+            {(busqueda || facturasFiltradas.length > limite) && (
               <div style={{ padding: '10px 18px', background: '#fffde7', borderBottom: '1px solid #e0e0e0', fontSize: 12, color: '#f57f17' }}>
-                Mostrando {facturasFiltradas.length} de {total} · Valor filtrado: <strong>{fmtCOP(valorFiltrado)}</strong>
+                {busqueda
+                  ? <>Mostrando {Math.min(facturasFiltradas.length, limite)} de {facturasFiltradas.length} resultados · Valor filtrado: <strong>{fmtCOP(valorFiltrado)}</strong></>
+                  : <>Mostrando {limite} de {total} · Para ver más usa el buscador o descarga el CSV</>
+                }
               </div>
             )}
             <div style={{ overflowX: 'auto' }}>
@@ -1143,7 +1050,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {facturasFiltradas.slice(-10).map((f, i) => (
+                  {facturasFiltradas.slice(0, limite).map((f, i) => (
                     <tr key={f.id || i}>
                       <td style={{ color: '#bbb', fontWeight: 600 }}>{i + 1}</td>
                       <td><span style={{ fontFamily: 'monospace', fontSize: 12, background: '#f5f5f5', padding: '2px 6px', borderRadius: 4 }}>{f.proveedor_nit || '—'}</span></td>
@@ -1160,7 +1067,9 @@ function FacturacionDashboard({ authHeader, onLogout }) {
               </table>
             </div>
             <div style={{ padding: '12px 18px', borderTop: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#888' }}>
-              <span>{facturasFiltradas.length} registros</span>
+              <span>
+                Mostrando <strong>{Math.min(facturasFiltradas.length, limite)}</strong> de <strong>{facturasFiltradas.length}</strong> registros
+              </span>
               <span style={{ fontWeight: 700, color: '#1b5e20' }}>Total: {fmtCOP(valorFiltrado)}</span>
             </div>
           </>
