@@ -31,7 +31,6 @@ INSTALLED_APPS = [
     'modules.facturacion',
     'modules.mesa_ayuda',
     'modules.gestion_administrativa',
-    'modules.sarlaft',
     'modules.icr',
 ]
 
