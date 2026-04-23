@@ -4,7 +4,9 @@ from .views import (
     DescargarStreamView, ProcesarStreamView, AbortarView, StatsDescargaView,
     SincronizarCronView, CronLogView, DescargarCarpetasView, InfoCarpetasView,
     ListarSemanasView, DescargarPDFsView,
-    DescargarScriptView, DescargarInstaladorView,
+    DescargarScriptView, DescargarInstaladorView, AbrirMercurioView,
+    SincronizarMercurioView, MercurioPDFsListView, DescargarMercurioPDFView,
+    DescargarMercurioPDFsMasivoView,
 )
 
 urlpatterns = [
@@ -23,4 +25,9 @@ urlpatterns = [
     path('descargar-pdfs/',             DescargarPDFsView.as_view(),      name='facturacion-descargar-pdfs'),
     path('descargar-script/',           DescargarScriptView.as_view(),    name='facturacion-descargar-script'),
     path('descargar-instalador/',       DescargarInstaladorView.as_view(),name='facturacion-descargar-instalador'),
+    path('abrir-mercurio/',             AbrirMercurioView.as_view(),      name='facturacion-abrir-mercurio'),
+    path('sincronizar-mercurio/stream/', SincronizarMercurioView.as_view(),  name='facturacion-sincronizar-mercurio'),
+    path('mercurio-pdfs/',              MercurioPDFsListView.as_view(),      name='facturacion-mercurio-pdfs-lista'),
+    path('mercurio-pdfs/masivo/',       DescargarMercurioPDFsMasivoView.as_view(), name='facturacion-mercurio-pdfs-masivo'),
+    path('mercurio-pdfs/<str:nombre>/', DescargarMercurioPDFView.as_view(), name='facturacion-mercurio-pdf'),
 ]
