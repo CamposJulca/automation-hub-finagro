@@ -61,6 +61,23 @@ services:
     networks:
       - finagro-net
 
+  # ── Servicio SARLAFT (independiente) ─────────────────────────────────────────
+  sarlaft:
+    build:
+      context: ../sarlaft
+      dockerfile: docker/Dockerfile
+    environment:
+      DEBUG:          "False"
+      ALLOWED_HOSTS:  "*"
+      NLP_CAMARA_URL: http://nlp-camara:8001
+    volumes:
+      - sarlaft_db:/app/db
+    depends_on:
+      - nlp-camara
+    restart: unless-stopped
+    networks:
+      - finagro-net
+
   # ── SIGA — Beneficios de Salud ───────────────────────────────────────────────
   siga:
     build:
@@ -86,6 +103,7 @@ services:
       - "9004:9004"   # mesa-ayuda               → Módulo Mesa de Ayuda
     depends_on:
       - backend
+      - sarlaft
       - siga
     restart: unless-stopped
     networks:
@@ -96,3 +114,4 @@ volumes:
   factia_data:
   siga_db:
   siga_landing:
+  sarlaft_db:
