@@ -44,7 +44,7 @@ function LoginForm({ onLogin, error }) {
                 onChange={e => setUsername(e.target.value)}
                 required
                 autoFocus
-                placeholder="Nombre de usuario Django"
+                placeholder="Nombre de usuario"
               />
             </label>
 
@@ -85,6 +85,38 @@ function LoginForm({ onLogin, error }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function TablaRepresentantes({ representantes }) {
+  if (!representantes || representantes.length === 0) {
+    return (
+      <p style={{ fontSize: 12, color: '#999', padding: '8px 0' }}>
+        Sin representantes extraídos.
+      </p>
+    );
+  }
+  return (
+    <table className="api-table" style={{ marginTop: 8 }}>
+      <thead>
+        <tr>
+          <th>Cargo</th>
+          <th>Nombre</th>
+          <th>Tipo Doc.</th>
+          <th>Identificación</th>
+        </tr>
+      </thead>
+      <tbody>
+        {representantes.map((r, i) => (
+          <tr key={i}>
+            <td style={{ fontSize: 12, color: '#555' }}>{r.cargo || '–'}</td>
+            <td style={{ fontWeight: 600 }}>{r.nombre || <span style={{ color: '#bbb' }}>No encontrado</span>}</td>
+            <td style={{ fontSize: 12 }}>{r.tipo_doc || '–'}</td>
+            <td><span className="endpoint-url">{r.cedula || '–'}</span></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -134,7 +166,7 @@ export default function SarlaftPage() {
       });
 
       if (res.status === 401 || res.status === 403) {
-        setAuthError('Credenciales inválidas o sin permisos. Verifica tu usuario y contraseña.');
+        setAuthError('Credenciales inválidas o sin permisos.');
         setCreds(null);
         return;
       }
@@ -150,11 +182,16 @@ export default function SarlaftPage() {
       setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch {
-      setUploadError('No se pudo conectar con el servidor. Verifica que el servicio esté activo.');
+      setUploadError('No se pudo conectar con el servidor.');
     } finally {
       setLoading(false);
     }
   };
+
+  // Total de representantes extraídos
+  const totalReps = resultado?.resultados?.reduce(
+    (acc, cert) => acc + (cert.representantes?.length || 0), 0
+  ) ?? '–';
 
   if (!creds) {
     return <LoginForm onLogin={handleLogin} error={authError} />;
@@ -169,8 +206,8 @@ export default function SarlaftPage() {
           <h1>SARLAFT · Validador Cámara de Comercio</h1>
           <p>
             Carga los certificados de existencia y representación legal en PDF.
-            El sistema extrae automáticamente razón social, NIT y representante legal
-            para cruce con listas restrictivas.
+            El sistema extrae automáticamente todos los representantes legales,
+            miembros de junta y revisores fiscales para cruce con listas restrictivas.
           </p>
         </div>
         <div className="banner-stats">
@@ -180,11 +217,11 @@ export default function SarlaftPage() {
           </div>
           <div className="banner-stat">
             <div className="banner-stat-num">{resultado?.resultados?.length ?? '–'}</div>
-            <div className="banner-stat-label">Procesados</div>
+            <div className="banner-stat-label">Certificados</div>
           </div>
           <div className="banner-stat">
-            <div className="banner-stat-num">{resultado?.errores?.length ?? '–'}</div>
-            <div className="banner-stat-label">Errores</div>
+            <div className="banner-stat-num">{totalReps}</div>
+            <div className="banner-stat-label">Personas</div>
           </div>
         </div>
       </div>
@@ -259,73 +296,71 @@ export default function SarlaftPage() {
         </div>
       </div>
 
-      {/* Resultados */}
-      {resultado && (
-        <>
-          {resultado.resultados?.length > 0 && (
-            <div className="card" style={{ marginBottom: 20 }}>
-              <div className="card-header">
-                <span className="card-header-title">
-                  Datos extraídos · {resultado.resultados.length} certificado(s)
-                </span>
-                <span style={{ fontSize: 12, color: '#888' }}>
-                  Ejecución #{resultado.execution_id}
-                </span>
-              </div>
-              <table className="api-table">
-                <thead>
-                  <tr>
-                    <th>Archivo</th>
-                    <th>Razón Social</th>
-                    <th>NIT</th>
-                    <th>Representante Legal</th>
-                    <th>Tipo Doc.</th>
-                    <th>Cédula</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resultado.resultados.map((r, i) => (
-                    <tr key={i}>
-                      <td style={{ fontSize: 12 }}>📄 {r.archivo}</td>
-                      <td style={{ fontWeight: 600 }}>
-                        {r.razon_social || <span style={{ color: '#bbb' }}>No encontrado</span>}
-                      </td>
-                      <td>
-                        <span className="endpoint-url">{r.nit || '–'}</span>
-                      </td>
-                      <td>{r.representante || <span style={{ color: '#bbb' }}>–</span>}</td>
-                      <td style={{ fontSize: 12 }}>{r.tipo_doc || '–'}</td>
-                      <td style={{ fontSize: 12 }}>{r.cedula || '–'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {/* Resultados — un card por certificado */}
+      {resultado?.resultados?.length > 0 && resultado.resultados.map((cert, idx) => (
+        <div className="card" key={idx} style={{ marginBottom: 20 }}>
+          <div className="card-header">
+            <span className="card-header-title">
+              📄 {cert.archivo}
+            </span>
+            <span style={{ fontSize: 12, color: '#888' }}>
+              Sesión #{resultado.execution_id}
+            </span>
+          </div>
 
-          {resultado.errores?.length > 0 && (
-            <div className="card">
-              <div className="card-header">
-                <span className="card-header-title" style={{ color: '#c62828' }}>
-                  ⚠ Errores · {resultado.errores.length} archivo(s) no procesado(s)
+          <div style={{ padding: '12px 24px 4px' }}>
+            <div style={{ display: 'flex', gap: 32, marginBottom: 12, flexWrap: 'wrap' }}>
+              <div>
+                <span style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1 }}>
+                  Razón Social
                 </span>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>
+                  {cert.razon_social || <span style={{ color: '#bbb' }}>No encontrado</span>}
+                </div>
               </div>
-              <table className="api-table">
-                <thead>
-                  <tr><th>Archivo</th><th>Detalle del error</th></tr>
-                </thead>
-                <tbody>
-                  {resultado.errores.map((e, i) => (
-                    <tr key={i}>
-                      <td>📄 {e.archivo}</td>
-                      <td style={{ color: '#c62828', fontSize: 12 }}>{e.error}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div>
+                <span style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1 }}>
+                  NIT
+                </span>
+                <div>
+                  <span className="endpoint-url">{cert.nit || '–'}</span>
+                </div>
+              </div>
+              <div>
+                <span style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1 }}>
+                  Personas encontradas
+                </span>
+                <div style={{ fontWeight: 600 }}>{cert.representantes?.length ?? 0}</div>
+              </div>
             </div>
-          )}
-        </>
+
+            <TablaRepresentantes representantes={cert.representantes} />
+          </div>
+        </div>
+      ))}
+
+      {/* Errores */}
+      {resultado?.errores?.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-header-title" style={{ color: '#c62828' }}>
+              ⚠ Errores · {resultado.errores.length} archivo(s) no procesado(s)
+            </span>
+          </div>
+          <table className="api-table">
+            <thead>
+              <tr><th>Archivo</th><th>Detalle del error</th></tr>
+            </thead>
+            <tbody>
+              {resultado.errores.map((e, i) => (
+                <tr key={i}>
+                  <td>📄 {e.archivo}</td>
+                  <td style={{ color: '#c62828', fontSize: 12 }}>{e.error}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
