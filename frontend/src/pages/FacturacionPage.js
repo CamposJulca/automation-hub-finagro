@@ -2,6 +2,53 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API = process.env.REACT_APP_API_URL || '/api';
 const AUTH_KEY = 'facturacion_auth';
+const DIR_HANDLE_DB = 'facturacion_dir_db';
+const DIR_HANDLE_STORE = 'dir_handles';
+const DIR_HANDLE_KEY = 'mercurio_pdfs_dir';
+
+/* ── IndexedDB helpers para persistir el directorio de descarga ──────────── */
+function openDirDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DIR_HANDLE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(DIR_HANDLE_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveDirHandle(handle) {
+  const db = await openDirDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DIR_HANDLE_STORE, 'readwrite');
+    tx.objectStore(DIR_HANDLE_STORE).put(handle, DIR_HANDLE_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function loadDirHandle() {
+  try {
+    const db = await openDirDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(DIR_HANDLE_STORE, 'readonly');
+      const req = tx.objectStore(DIR_HANDLE_STORE).get(DIR_HANDLE_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch { return null; }
+}
+
+async function clearDirHandle() {
+  try {
+    const db = await openDirDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(DIR_HANDLE_STORE, 'readwrite');
+      tx.objectStore(DIR_HANDLE_STORE).delete(DIR_HANDLE_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch { /* ignore */ }
+}
 
 function getBasicAuthHeader(u, p) {
   return 'Basic ' + btoa(`${u}:${p}`);
@@ -420,6 +467,160 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   // Modal advertencias sin fecha
   const [verSinFecha, setVerSinFecha] = useState(false);
   // modal = { title, subtitle, logs: [], isDone: bool, status: 'running'|'ok'|'error' }
+
+  // Mercurio — sincronización completa (SSE)
+  const [mercurioLoading, setMercurioLoading] = useState(false);
+  const [mercurioResult, setMercurioResult]   = useState(null);
+  const [mercurioPDFs, setMercurioPDFs]       = useState(null); // lista de PDFs en servidor
+  const [descargaMasivaLoading, setDescargaMasivaLoading] = useState(false);
+  const [savedDirName, setSavedDirName] = useState(null); // nombre de la carpeta guardada
+
+  // Cargar nombre de carpeta guardada al montar
+  useEffect(() => {
+    (async () => {
+      const handle = await loadDirHandle();
+      if (handle) setSavedDirName(handle.name);
+    })();
+  }, []);
+
+  const cargarListaPDFs = async () => {
+    try {
+      const res = await fetch(`${API}/facturacion/mercurio-pdfs/`, { headers: { Authorization: authHeader } });
+      if (res.ok) {
+        const data = await res.json();
+        setMercurioPDFs(data.pdfs || []);
+      }
+    } catch { /* silencioso */ }
+  };
+
+  const descargarPDF = async (nombre) => {
+    const res = await fetch(`${API}/facturacion/mercurio-pdfs/${nombre}/`, { headers: { Authorization: authHeader } });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nombre; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Descargar PDFs a una carpeta usando File System Access API
+  const _descargarADirectorio = async (dirHandle) => {
+    const listRes = await fetch(`${API}/facturacion/mercurio-pdfs/`, { headers: { Authorization: authHeader } });
+    if (!listRes.ok) { alert('Error al obtener lista de PDFs.'); return; }
+    const { pdfs } = await listRes.json();
+    if (!pdfs || pdfs.length === 0) { alert('No hay PDFs disponibles para descargar.'); return; }
+
+    let ok = 0, errores = 0;
+    for (const pdf of pdfs) {
+      try {
+        const res = await fetch(`${API}/facturacion/mercurio-pdfs/${pdf.nombre}/`, { headers: { Authorization: authHeader } });
+        if (!res.ok) { errores++; continue; }
+        const blob = await res.blob();
+        const fileHandle = await dirHandle.getFileHandle(pdf.nombre, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        ok++;
+      } catch { errores++; }
+    }
+    alert(`Descarga masiva completada.\n${ok} PDFs guardados en "${dirHandle.name}"${errores > 0 ? `\n${errores} con errores` : ''}`);
+  };
+
+  const descargaMasivaPDFs = async () => {
+    setDescargaMasivaLoading(true);
+    try {
+      if (window.showDirectoryPicker) {
+        // Intentar reusar carpeta guardada
+        let dirHandle = await loadDirHandle();
+
+        if (dirHandle) {
+          // Verificar que aún tenemos permiso
+          const perm = await dirHandle.queryPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') {
+            const req = await dirHandle.requestPermission({ mode: 'readwrite' });
+            if (req !== 'granted') {
+              // Permiso denegado, pedir nueva carpeta
+              dirHandle = null;
+            }
+          }
+        }
+
+        if (!dirHandle) {
+          // Primera vez o permiso perdido: pedir carpeta al usuario
+          try {
+            dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+          } catch (e) {
+            setDescargaMasivaLoading(false);
+            return; // Usuario canceló
+          }
+          await saveDirHandle(dirHandle);
+          setSavedDirName(dirHandle.name);
+        }
+
+        await _descargarADirectorio(dirHandle);
+      } else {
+        // Fallback: descargar ZIP
+        const res = await fetch(`${API}/facturacion/mercurio-pdfs/masivo/`, { headers: { Authorization: authHeader } });
+        if (!res.ok) { alert(`Error ${res.status}: No hay PDFs disponibles.`); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'Mercurio_PDFs.zip'; a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      alert(`Error en descarga masiva: ${e.message}`);
+    } finally {
+      setDescargaMasivaLoading(false);
+    }
+  };
+
+  const cambiarCarpetaDescarga = async () => {
+    if (!window.showDirectoryPicker) return;
+    try {
+      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      await saveDirHandle(dirHandle);
+      setSavedDirName(dirHandle.name);
+    } catch { /* Usuario canceló */ }
+  };
+
+  const limpiarCarpetaDescarga = async () => {
+    await clearDirHandle();
+    setSavedDirName(null);
+  };
+
+  const sincronizarMercurio = async () => {
+    setMercurioLoading(true);
+    setMercurioResult(null);
+    setModal({
+      title:    'Sincronizar Mercurio',
+      subtitle: 'Login → WorkFlow → Paso 1 → Descarga EMLs → Extracción PDFs',
+      logs:     [],
+      isDone:   false,
+      status:   'running',
+    });
+
+    try {
+      await consumeSSE(`${API}/facturacion/sincronizar-mercurio/stream/`, {
+        headers: { Authorization: authHeader },
+        onLog: (line) => setModal(m => ({ ...m, logs: [...m.logs, line] })),
+        onResult: (data) => {
+          setMercurioResult(data);
+          const resumen = `─── Completado: ${data.pdfs_nuevos ?? 0} nuevos · ${data.pdfs_skip ?? 0} ya existían · ${data.errores ?? 0} errores ───`;
+          setModal(m => ({ ...m, logs: [...m.logs, resumen], isDone: true, status: data.errores > 0 ? 'error' : 'ok' }));
+          cargarListaPDFs();
+        },
+        onError: (msg) => {
+          setMercurioResult({ status: 'error', mensaje: msg });
+          setModal(m => ({ ...m, isDone: true, status: 'error' }));
+        },
+      });
+    } catch (e) {
+      setMercurioResult({ status: 'error', mensaje: `Error de red: ${e.message}` });
+      setModal(m => m ? ({ ...m, isDone: true, status: 'error' }) : null);
+    } finally {
+      setMercurioLoading(false);
+    }
+  };
 
   const cargarStats = useCallback(async () => {
     setLoadingStats(true);
@@ -919,7 +1120,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       {/* Pipeline */}
       <div className="section-header">
         <div className="section-title">Pipeline de procesamiento</div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <a
             href={`${API}/facturacion/descargar-instalador/`}
             download
@@ -928,6 +1129,48 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           >
             ⬇ Descargar SincronizarFacturas.exe
           </a>
+          <button
+            className="btn btn-primary"
+            style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', background: '#1a237e', borderColor: '#1a237e', display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={sincronizarMercurio}
+            disabled={mercurioLoading}
+          >
+            {mercurioLoading
+              ? <><SpinnerIcon size={14} /> Sincronizando Mercurio...</>
+              : '🌐 Sincronizar Mercurio'}
+          </button>
+          <button
+            className="btn btn-outline"
+            style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={cargarListaPDFs}
+            disabled={mercurioLoading}
+          >
+            📂 Ver PDFs Mercurio
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', background: '#2e7d32', borderColor: '#2e7d32', display: 'flex', alignItems: 'center', gap: 6, borderRadius: savedDirName ? '6px 0 0 6px' : undefined }}
+              onClick={descargaMasivaPDFs}
+              disabled={descargaMasivaLoading || mercurioLoading}
+              title={savedDirName ? `Descargar a: ${savedDirName}` : 'Seleccionar carpeta y descargar'}
+            >
+              {descargaMasivaLoading
+                ? <><SpinnerIcon size={14} /> Descargando...</>
+                : <>📥 Descarga Masiva PDFs{savedDirName ? ` → ${savedDirName}` : ''}</>}
+            </button>
+            {savedDirName && (
+              <button
+                className="btn btn-outline"
+                style={{ fontSize: 11, padding: '7px 10px', borderRadius: '0 6px 6px 0', borderLeft: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                onClick={cambiarCarpetaDescarga}
+                disabled={descargaMasivaLoading}
+                title="Cambiar carpeta de descarga"
+              >
+                📁
+              </button>
+            )}
+          </div>
           <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={onLogout}>Cerrar sesión</button>
         </div>
       </div>
@@ -1001,6 +1244,74 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           </div>
         </div>
       </div>
+
+      {/* Panel PDFs Mercurio */}
+      {mercurioPDFs !== null && (
+        <div style={{ margin: '0 0 20px', borderRadius: 10, overflow: 'hidden', border: '1px solid #c8e6c9' }}>
+          {/* Cabecera */}
+          <div style={{ padding: '12px 18px', background: '#e8f5e9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 20 }}>📂</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: '#1b5e20' }}>
+                  PDFs descargados de Mercurio — {mercurioPDFs.length} archivos
+                </div>
+                {mercurioResult?.total !== undefined && (
+                  <div style={{ fontSize: 11, color: '#555', marginTop: 2, display: 'flex', gap: 12 }}>
+                    <span>✅ Nuevos: <b>{mercurioResult.pdfs_nuevos}</b></span>
+                    <span>⏭ Ya existían: <b>{mercurioResult.pdfs_skip}</b></span>
+                    {mercurioResult.errores > 0 && <span style={{ color: '#c62828' }}>❌ Errores: <b>{mercurioResult.errores}</b></span>}
+                  </div>
+                )}
+              </div>
+            </div>
+            <button onClick={() => { setMercurioPDFs(null); setMercurioResult(null); }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#999' }}>✕</button>
+          </div>
+
+          {/* Lista de PDFs */}
+          {mercurioPDFs.length === 0
+            ? <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>No hay PDFs disponibles aún.</div>
+            : (
+              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: '#f5f5f5', borderBottom: '1px solid #e0e0e0' }}>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontWeight: 700, color: '#555' }}>Radicado</th>
+                      <th style={{ padding: '8px 16px', textAlign: 'right', fontWeight: 700, color: '#555' }}>Tamaño</th>
+                      <th style={{ padding: '8px 16px', textAlign: 'center', fontWeight: 700, color: '#555' }}>Descargar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mercurioPDFs.map((pdf, i) => (
+                      <tr key={pdf.nombre} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                        <td style={{ padding: '8px 16px', color: '#333', fontWeight: 600 }}>
+                          {pdf.nombre.replace('.pdf', '')}
+                        </td>
+                        <td style={{ padding: '8px 16px', textAlign: 'right', color: '#777' }}>
+                          {(pdf.size / 1024).toFixed(0)} KB
+                        </td>
+                        <td style={{ padding: '8px 16px', textAlign: 'center' }}>
+                          <button
+                            onClick={() => descargarPDF(pdf.nombre)}
+                            style={{
+                              background: '#1a237e', color: '#fff', border: 'none',
+                              borderRadius: 5, padding: '4px 12px', fontSize: 11,
+                              fontWeight: 700, cursor: 'pointer',
+                            }}
+                          >
+                            ⬇ PDF
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+        </div>
+      )}
 
       {/* Tabla */}
       <div className="section-header">
