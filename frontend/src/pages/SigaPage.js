@@ -50,6 +50,12 @@ const CRUCE_ESTADO_COLOR = {
   INACTIVO:     { bg: '#f5f5f5', color: '#757575' },
 };
 
+const ELEGIBILIDAD_COLOR = {
+  ELEGIBLE_80_20:   { bg: '#e8f5e9', color: '#2e7d32' },
+  PENSIONADO_100:   { bg: '#e3f2fd', color: '#1565c0' },
+  BLOQUEADO_CRUCE:  { bg: '#fff3e0', color: '#e65100' },
+};
+
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 async function descargarExcel(url, nombreSugerido) {
   try {
@@ -847,8 +853,8 @@ function TabPlanilla() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
               {[
                 { label: 'Total empleados', value: calcResult.total_empleados, color: '#1565c0' },
-                { label: 'Total empresa (80%)', value: fmtCOP(calcResult.total_empresa), color: GREEN },
-                { label: 'Total empleado (20%)', value: fmtCOP(calcResult.total_empleado), color: '#f57f17' },
+                { label: 'Total empresa', value: fmtCOP(calcResult.total_empresa), color: GREEN },
+                { label: 'Total empleado / pensionado', value: fmtCOP(calcResult.total_empleado), color: '#f57f17' },
                 { label: 'Total no gravable', value: fmtCOP(calcResult.total_no_gravable), color: '#6a1b9a' },
               ].map(s => (
                 <div key={s.label} style={{ background: '#f9fafb', borderRadius: 8, padding: '14px 16px', textAlign: 'center' }}>
@@ -932,8 +938,12 @@ function TabPlanilla() {
                 <tr><th>Cédula</th><th>Nombre Kactus</th><th>EPS</th>
                   <th style={{ textAlign: 'center' }}>Benef.</th>
                   <th style={{ textAlign: 'right' }}>Total familia</th>
-                  <th style={{ textAlign: 'right' }}>Empresa (80%)</th>
-                  <th style={{ textAlign: 'right' }}>Empleado (20%)</th>
+                  <th>Elegibilidad</th>
+                  <th style={{ textAlign: 'center' }}>% Emp.</th>
+                  <th style={{ textAlign: 'center' }}>% Colab.</th>
+                  <th style={{ textAlign: 'right' }}>Empresa</th>
+                  <th style={{ textAlign: 'right' }}>Empleado/Pens.</th>
+                  <th style={{ textAlign: 'right' }}>No cubierto</th>
                   <th style={{ textAlign: 'right' }}>No gravable</th>
                   <th style={{ textAlign: 'right' }}>Gravable</th>
                   <th>Estado</th></tr>
@@ -946,8 +956,21 @@ function TabPlanilla() {
                     <td style={{ fontSize: 12 }}>{d.eps}</td>
                     <td style={{ textAlign: 'center', fontFamily: 'monospace' }}>{d.num_beneficiarios}</td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{fmtCOP(d.total_familia)}</td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                        {elegibilidadBadge(d.estado_elegibilidad)}
+                        {d.motivo_elegibilidad && (
+                          <span style={{ maxWidth: 240, color: '#888', fontSize: 10.5, lineHeight: 1.25 }}>
+                            {d.motivo_elegibilidad}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center', fontFamily: 'monospace', fontSize: 12 }}>{Number(d.porcentaje_empresa_aplicado || 0).toFixed(0)}%</td>
+                    <td style={{ textAlign: 'center', fontFamily: 'monospace', fontSize: 12 }}>{Number(d.porcentaje_empleado_aplicado || 0).toFixed(0)}%</td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, color: GREEN, fontWeight: 700 }}>{fmtCOP(d.valor_empresa)}</td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{fmtCOP(d.valor_empleado)}</td>
+                    <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, color: d.valor_no_cubierto > 0 ? '#e65100' : '#aaa' }}>{fmtCOP(d.valor_no_cubierto)}</td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{fmtCOP(d.apoyo_no_gravable)}</td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, color: d.apoyo_gravable > 0 ? '#c62828' : '#aaa', fontWeight: d.apoyo_gravable > 0 ? 700 : 400 }}>{fmtCOP(d.apoyo_gravable)}</td>
                     <td>{estadoBadgeCruce(d.estado_cruce)}</td>
@@ -965,6 +988,16 @@ function TabPlanilla() {
 function estadoBadgeCruce(estado) {
   const c = CRUCE_ESTADO_COLOR[estado] || { bg: '#f5f5f5', color: '#555' };
   return <span style={{ ...c, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>{estado || '—'}</span>;
+}
+
+function elegibilidadBadge(estado) {
+  const c = ELEGIBILIDAD_COLOR[estado] || { bg: '#f5f5f5', color: '#555' };
+  const label = {
+    ELEGIBLE_80_20: '80/20',
+    PENSIONADO_100: 'Pensionado 100%',
+    BLOQUEADO_CRUCE: 'Bloqueado',
+  }[estado] || estado || '—';
+  return <span title={estado || ''} style={{ ...c, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>{label}</span>;
 }
 
 /* ── TabApoyoGravable ─────────────────────────────────────────────────────── */
