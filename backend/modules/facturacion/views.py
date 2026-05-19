@@ -726,10 +726,15 @@ class AbrirMercurioView(APIView):
     permission_classes = [IsAuthenticated]
 
     MERCURIO_URL     = 'https://mercurio.finagro.com.co/mercurio'
-    MERCURIO_USUARIO = 'Azambrano'
-    MERCURIO_CLAVE   = 'Pagos2603%'
+    MERCURIO_USUARIO = os.environ.get('MERCURIO_USER', '')
+    MERCURIO_CLAVE   = os.environ.get('MERCURIO_PASS', '')
 
     def post(self, request):
+        if not self.MERCURIO_USUARIO or not self.MERCURIO_CLAVE:
+            return Response(
+                {'status': 'error', 'mensaje': 'MERCURIO_USER / MERCURIO_PASS no configurados en el entorno.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         import base64
         try:
             from playwright.sync_api import sync_playwright
@@ -887,13 +892,19 @@ class SincronizarMercurioView(APIView):
     permission_classes = [IsAuthenticated]
 
     MERCURIO_URL     = 'https://mercurio.finagro.com.co/mercurio/index.jsp'
-    MERCURIO_USUARIO = 'Azambrano'
-    MERCURIO_CLAVE   = 'Pagos2603%'
+    MERCURIO_USUARIO = os.environ.get('MERCURIO_USER', '')
+    MERCURIO_CLAVE   = os.environ.get('MERCURIO_PASS', '')
     DOWNLOAD_DIR     = '/tmp/mercurio/descargas'
     PDF_DIR          = '/tmp/mercurio/descargas/pdfs'
 
     def post(self, request):
-        import re, email as _email, zipfile, io, base64
+        if not self.MERCURIO_USUARIO or not self.MERCURIO_CLAVE:
+            return Response(
+                {'status': 'error', 'mensaje': 'MERCURIO_USER / MERCURIO_PASS no configurados en el entorno.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        import re, email as _email, zipfile, io, base64, tempfile, unicodedata, glob, hashlib
+        from collections import defaultdict
         from email import policy as _policy
 
         try:
@@ -903,6 +914,257 @@ class SincronizarMercurioView(APIView):
                 {'status': 'error', 'mensaje': 'Playwright no está instalado en el servidor.'},
                 status=500,
             )
+
+        try:
+            import extract_msg as _extract_msg
+        except ImportError:
+            _extract_msg = None
+
+        try:
+            import pymupdf as _pymupdf
+        except ImportError:
+            try:
+                import fitz as _pymupdf
+            except ImportError:
+                _pymupdf = None
+
+        try:
+            import pytesseract as _pytesseract
+        except ImportError:
+            _pytesseract = None
+
+        try:
+            from PIL import Image as _PILImage
+        except ImportError:
+            _PILImage = None
+
+        # ── Helpers para identificar facturas dentro de PDFs ──────────────
+        FACTURA_PATRONES = [
+            'factura electronica de venta',
+            'factura de venta electronica',
+            'nota credito electronica',
+            'nota de credito electronica',
+            'nota debito electronica',
+            'nota de debito electronica',
+        ]
+
+        # Patrones para extraer el "número de factura" del texto normalizado
+        NUMERO_PATRONES = [
+            re.compile(
+                r'(?:factura(?:\s+electronica)?(?:\s+de\s+venta)?'
+                r'|nota\s+(?:de\s+)?(?:credito|debito)(?:\s+electronica)?)'
+                r'\s*(?:n[°ºo]?\.?\s*|numero\s+|[:#]\s*)'
+                r'([a-z]{0,8}\s*-?\s*\d{2,15})'
+            ),
+            re.compile(r'\bno\.?\s+([a-z]{1,8}\s*-?\s*\d{2,15})\b'),
+            re.compile(r'\bn[°ºo]\.?\s+([a-z]{1,8}\s*-?\s*\d{2,15})\b'),
+        ]
+
+        def _extraer_numero_factura(texto_norm):
+            if not texto_norm:
+                return None
+            for rx in NUMERO_PATRONES:
+                m = rx.search(texto_norm)
+                if m:
+                    return re.sub(r'\s+', ' ', m.group(1)).strip().upper()
+            return None
+
+        def _normalizar_texto(txt):
+            if not txt:
+                return ''
+            nfd = unicodedata.normalize('NFD', txt)
+            sin_tildes = ''.join(c for c in nfd if unicodedata.category(c) != 'Mn')
+            return re.sub(r'\s+', ' ', sin_tildes.lower())
+
+        def _ocr_paginas(doc, max_paginas=2):
+            """Renderiza las primeras páginas y las pasa por tesseract (es)."""
+            if _pytesseract is None or _PILImage is None:
+                return ''
+            textos = []
+            for idx, page in enumerate(doc):
+                if idx >= max_paginas:
+                    break
+                try:
+                    pix = page.get_pixmap(dpi=200, alpha=False)
+                    img = _PILImage.frombytes('RGB', (pix.width, pix.height), pix.samples)
+                    textos.append(_pytesseract.image_to_string(img, lang='spa') or '')
+                except Exception:
+                    continue
+            return ' '.join(textos)
+
+        def _analizar_pdf_factura(pdf_bytes):
+            """
+            Retorna dict: {'matchea', 'via_ocr', 'numero'}.
+            via_ocr=True cuando el texto nativo no alcanzó y el match
+            se logró tras pasar las páginas por tesseract.
+            numero: identificador de factura/nota extraído del texto, o None.
+            """
+            res = {'matchea': False, 'via_ocr': False, 'numero': None}
+            if _pymupdf is None or not pdf_bytes:
+                return res
+            try:
+                doc = _pymupdf.open(stream=pdf_bytes, filetype='pdf')
+            except Exception:
+                return res
+            try:
+                texto_total = []
+                for page in doc:
+                    try:
+                        texto_total.append(page.get_text() or '')
+                    except Exception:
+                        continue
+                    if len(' '.join(texto_total)) > 20000:
+                        break
+                texto_norm = _normalizar_texto(' '.join(texto_total))
+                if any(p in texto_norm for p in FACTURA_PATRONES):
+                    res['matchea'] = True
+                    res['numero']  = _extraer_numero_factura(texto_norm)
+                    return res
+
+                # Fallback OCR sólo si el texto nativo es pobre (PDF escaneado)
+                texto_sin_espacios = re.sub(r'\s+', '', texto_norm)
+                if len(texto_sin_espacios) < 50:
+                    texto_ocr = _normalizar_texto(_ocr_paginas(doc))
+                    if any(p in texto_ocr for p in FACTURA_PATRONES):
+                        res['matchea'] = True
+                        res['via_ocr'] = True
+                        res['numero']  = _extraer_numero_factura(texto_ocr)
+            finally:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+            return res
+
+        def _recolectar_pdfs_de_zip(zip_bytes, ruta_padre='', depth=0, max_depth=5):
+            """
+            Recorre un ZIP recursivamente acumulando PDFs.
+            Si encuentra ZIPs anidados los abre hasta `max_depth` niveles.
+            Retorna lista de (ruta_logica, bytes_pdf).
+            """
+            encontrados = []
+            if depth > max_depth:
+                return encontrados
+            try:
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                    for archivo in zf.namelist():
+                        nombre = archivo.lower()
+                        if nombre.endswith('/') or nombre.endswith('\\'):
+                            continue
+                        ruta_logica = f'{ruta_padre}/{archivo}' if ruta_padre else archivo
+                        if nombre.endswith('.pdf'):
+                            try:
+                                encontrados.append((ruta_logica, zf.read(archivo)))
+                            except Exception:
+                                continue
+                        elif nombre.endswith('.zip'):
+                            try:
+                                inner = zf.read(archivo)
+                            except Exception:
+                                continue
+                            encontrados.extend(
+                                _recolectar_pdfs_de_zip(inner, ruta_logica, depth + 1, max_depth)
+                            )
+            except zipfile.BadZipFile:
+                return encontrados
+            return encontrados
+
+        def _guardar_pdfs_filtrados(pdfs_candidatos, radicado):
+            """
+            pdfs_candidatos: lista de (nombre_origen, bytes).
+            Pasos:
+              1) Filtra los PDFs que parezcan factura/nota (con OCR fallback).
+              2) De-duplica primero por número de factura (deja el más grande
+                 de cada grupo), después por hash byte-a-byte.
+              3) Si ninguno matcheó como factura → fallback al primer candidato.
+            Retorna lista de dicts: {path, size, fallback, via_ocr, numero,
+                                     total, index, descartados}
+            'descartados' (solo en el primero del lote) lista los duplicados
+            internos que se ignoraron.
+            """
+            if not pdfs_candidatos:
+                return []
+
+            # 1) Analizar cada candidato
+            analizados = []  # (nombre, bytes, info)
+            for nombre, data in pdfs_candidatos:
+                info = _analizar_pdf_factura(data)
+                if info['matchea']:
+                    analizados.append((nombre, data, info))
+
+            fallback = False
+            if not analizados:
+                nombre0, bytes0 = pdfs_candidatos[0]
+                analizados = [(nombre0, bytes0, {'matchea': False, 'via_ocr': False, 'numero': None})]
+                fallback = True
+
+            # 2) De-duplicación
+            descartados = []  # [(nombre_origen, motivo)]
+            elegidos    = []  # (nombre, bytes, info)
+
+            if not fallback:
+                # 2a) Agrupar por número de factura (los con número → uno por número)
+                grupos_num = {}
+                sin_numero = []
+                for nombre, data, info in analizados:
+                    num = info.get('numero')
+                    if num:
+                        grupos_num.setdefault(num, []).append((nombre, data, info))
+                    else:
+                        sin_numero.append((nombre, data, info))
+
+                for num, items in grupos_num.items():
+                    # Quedarme con el más grande (probable representación oficial)
+                    items.sort(key=lambda x: len(x[1]), reverse=True)
+                    ganador = items[0]
+                    elegidos.append(ganador)
+                    for perdedor in items[1:]:
+                        descartados.append((perdedor[0], f'duplicado de No. {num}'))
+
+                # 2b) Para los sin número, deduplicar por hash SHA1
+                hashes_vistos = {hashlib.sha1(b).hexdigest(): True for _, b, _ in elegidos}
+                for nombre, data, info in sin_numero:
+                    h = hashlib.sha1(data).hexdigest()
+                    if h in hashes_vistos:
+                        descartados.append((nombre, 'duplicado por hash'))
+                    else:
+                        hashes_vistos[h] = True
+                        elegidos.append((nombre, data, info))
+            else:
+                elegidos = analizados
+
+            # 3) Guardar
+            guardados = []
+            for idx, (_nombre, data, info) in enumerate(elegidos):
+                sufijo = '' if idx == 0 else f'_{idx + 1}'
+                dest_path = os.path.join(self.PDF_DIR, f'{radicado}{sufijo}.pdf')
+                with open(dest_path, 'wb') as out:
+                    out.write(data)
+                entry = {
+                    'path':     dest_path,
+                    'size':     len(data),
+                    'fallback': fallback,
+                    'via_ocr':  info.get('via_ocr', False),
+                    'numero':   info.get('numero'),
+                    'total':    len(elegidos),
+                    'index':    idx + 1,
+                }
+                if idx == 0 and descartados:
+                    entry['descartados'] = descartados
+                guardados.append(entry)
+            return guardados
+
+        # Limpiar PDFs de sincronizaciones anteriores para evitar duplicados
+        if os.path.isdir(self.PDF_DIR):
+            for f in os.listdir(self.PDF_DIR):
+                fp = os.path.join(self.PDF_DIR, f)
+                if os.path.isfile(fp):
+                    os.remove(fp)
+        if os.path.isdir(self.DOWNLOAD_DIR):
+            for f in os.listdir(self.DOWNLOAD_DIR):
+                fp = os.path.join(self.DOWNLOAD_DIR, f)
+                if os.path.isfile(fp) and f.endswith('.eml'):
+                    os.remove(fp)
 
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)
         os.makedirs(self.PDF_DIR,      exist_ok=True)
@@ -981,10 +1243,12 @@ class SincronizarMercurioView(APIView):
             encoding = 'latin-1' if 'ISO-8859-1' in ct else 'utf-8'
             html_content = body.decode(encoding, errors='replace')
 
-            # Buscar link a PDF o EML en href= o src= (con o sin comillas)
+            # Buscar link a PDF, EML o MSG en href= o src= (con o sin comillas)
             url_match = re.search(r'(?:href|src)=["\']?([^\s"\'<>]+\.pdf)["\']?', html_content, re.IGNORECASE)
             if not url_match:
                 url_match = re.search(r'(?:href|src)=["\']?([^\s"\'<>]+\.eml)["\']?', html_content, re.IGNORECASE)
+            if not url_match:
+                url_match = re.search(r'(?:href|src)=["\']?([^\s"\'<>]+\.msg)["\']?', html_content, re.IGNORECASE)
 
             if url_match:
                 file_url = url_match.group(1)
@@ -995,7 +1259,13 @@ class SincronizarMercurioView(APIView):
                     raise Exception(f'Download HTTP {resp_file.status} para {file_url}')
                 with open(dest, 'wb') as f:
                     f.write(resp_file.body())
-                ext = 'pdf' if file_url.lower().endswith('.pdf') else 'eml'
+                lower_url = file_url.lower()
+                if lower_url.endswith('.pdf'):
+                    ext = 'pdf'
+                elif lower_url.endswith('.msg'):
+                    ext = 'msg'
+                else:
+                    ext = 'eml'
                 return f'{ext}_link'
 
             # Log HTML para diagnóstico (primeros 500 chars)
@@ -1003,8 +1273,15 @@ class SincronizarMercurioView(APIView):
             raise Exception(f'Sin EML/PDF en TraerImagen (Content-Type: {ct}) HTML: {snippet}')
 
         def extraer_pdf_de_eml(eml_path, radicado):
+            """
+            Recolecta TODOS los PDFs adjuntos al EML (incluyendo los que vienen
+            dentro de ZIPs), filtra los que parezcan factura/nota electrónica y
+            los guarda. Retorna la lista de PDFs guardados.
+            """
             with open(eml_path, 'rb') as f:
                 msg = _email.message_from_binary_file(f, policy=_policy.default)
+
+            candidatos = []  # [(nombre_origen, bytes), ...]
             for part in msg.walk():
                 ct         = part.get_content_type()
                 nombre_adj = part.get_filename() or ''
@@ -1012,22 +1289,43 @@ class SincronizarMercurioView(APIView):
                     payload = part.get_payload(decode=True)
                     if not payload:
                         continue
-                    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-                        for archivo in zf.namelist():
-                            if archivo.lower().endswith('.pdf'):
-                                pdf_bytes = zf.read(archivo)
-                                dest_path = os.path.join(self.PDF_DIR, f'{radicado}.pdf')
-                                with open(dest_path, 'wb') as out:
-                                    out.write(pdf_bytes)
-                                return dest_path, len(pdf_bytes)
+                    candidatos.extend(_recolectar_pdfs_de_zip(payload, ruta_padre=nombre_adj or 'attachment.zip'))
                 elif ct == 'application/pdf' or nombre_adj.lower().endswith('.pdf'):
                     payload = part.get_payload(decode=True)
                     if payload:
-                        dest_path = os.path.join(self.PDF_DIR, f'{radicado}.pdf')
-                        with open(dest_path, 'wb') as out:
-                            out.write(payload)
-                        return dest_path, len(payload)
-            return None, 0
+                        candidatos.append((nombre_adj or 'attachment.pdf', payload))
+
+            return _guardar_pdfs_filtrados(candidatos, radicado)
+
+        def extraer_pdf_de_msg(msg_path, radicado):
+            """
+            Recolecta todos los PDFs adjuntos al .msg (incl. dentro de ZIPs),
+            filtra los que parezcan factura/nota electrónica y los guarda.
+            """
+            if _extract_msg is None:
+                raise Exception('extract-msg no está instalado en el servidor')
+
+            candidatos = []
+            msg_obj = _extract_msg.Message(msg_path)
+            try:
+                for adj in (msg_obj.attachments or []):
+                    nombre_adj = (getattr(adj, 'longFilename', None)
+                                  or getattr(adj, 'shortFilename', None)
+                                  or '').lower()
+                    data = getattr(adj, 'data', None)
+                    if not data or not isinstance(data, (bytes, bytearray)):
+                        continue
+                    if nombre_adj.endswith('.pdf'):
+                        candidatos.append((nombre_adj, bytes(data)))
+                    elif nombre_adj.endswith('.zip'):
+                        candidatos.extend(_recolectar_pdfs_de_zip(bytes(data), ruta_padre=nombre_adj))
+            finally:
+                try:
+                    msg_obj.close()
+                except Exception:
+                    pass
+
+            return _guardar_pdfs_filtrados(candidatos, radicado)
 
         # ── generador SSE ──────────────────────────────────────────────────
         def generar():
@@ -1040,8 +1338,7 @@ class SincronizarMercurioView(APIView):
 
                     # Login
                     yield _sse('🔐 Iniciando login en Mercurio...')
-                    page.goto(self.MERCURIO_URL, timeout=30000)
-                    page.wait_for_load_state('domcontentloaded')
+                    page.goto(self.MERCURIO_URL, timeout=30000, wait_until='domcontentloaded')
                     page.wait_for_timeout(2000)
                     page.locator("input[name='asri']").click()
                     page.locator("input[name='asri']").type(self.MERCURIO_USUARIO, delay=80)
@@ -1050,20 +1347,39 @@ class SincronizarMercurioView(APIView):
                     page.wait_for_timeout(500)
                     with page.expect_response(lambda r: 'ConsultarUsuarioLogueado' in r.url, timeout=15000):
                         page.locator("input[name='Submit']").click()
-                    page.wait_for_url(lambda url: 'index.jsp' not in url, timeout=15000)
+
+                    # Esperar a que la URL cambie (login exitoso) o se quede
+                    # en index.jsp con código de error (login fallido).
+                    try:
+                        page.wait_for_url(lambda url: 'index.jsp' not in url, timeout=15000)
+                    except Exception:
+                        current_url = page.url
+                        if 'err=' in current_url:
+                            import re as _re
+                            err_match = _re.search(r'err=(\d+)', current_url)
+                            err_code = err_match.group(1) if err_match else 'desconocido'
+                            err_msgs = {
+                                '52': 'Credenciales inválidas o sesión ya activa en otro equipo.',
+                                '51': 'Usuario no encontrado en el sistema.',
+                                '53': 'Usuario bloqueado por múltiples intentos fallidos.',
+                                '54': 'Contraseña expirada. Debe renovarla en Mercurio.',
+                            }
+                            detalle = err_msgs.get(err_code, f'Error no catalogado (código {err_code}).')
+                            yield _sse_error(
+                                f'Login en Mercurio rechazado (err={err_code}): {detalle} '
+                                f'Verifique las credenciales o contacte al administrador de Mercurio.'
+                            )
+                        else:
+                            html_post = page.content()
+                            if 'Login incorrecto' in html_post or 'Usuario Inactivo' in html_post:
+                                yield _sse_error('Login fallido. Verifica credenciales.')
+                            else:
+                                yield _sse_error('Login en Mercurio no respondió a tiempo. Intente de nuevo.')
+                        browser.close()
+                        return
+
                     page.wait_for_load_state('domcontentloaded', timeout=15000)
                     page.wait_for_timeout(2000)
-
-                    # La página post-login carga frames dinámicamente; intentamos
-                    # leer el contenido pero si aún está navegando lo ignoramos.
-                    try:
-                        html_post = page.content()
-                        if 'Login incorrecto' in html_post or 'Usuario Inactivo' in html_post:
-                            yield _sse_error('Login fallido. Verifica credenciales.')
-                            browser.close()
-                            return
-                    except Exception:
-                        pass  # URL ya cambió → login exitoso
                     yield _sse('✅ Login OK')
 
                     # Navegar a WorkFlow
@@ -1114,7 +1430,18 @@ class SincronizarMercurioView(APIView):
                         wf_frame.wait_for_load_state('domcontentloaded')
                         page.wait_for_timeout(1000)
                     else:
-                        yield _sse(f'   ⚠️ No existe opción Paso=1 (opciones: {[v for v,_ in opciones]}). Continuando sin filtro...')
+                        yield _sse('ℹ️ No hay radicados en Paso=1 (Mercurio oculta el filtro cuando está vacío). Finalizando sin errores.')
+                        browser.close()
+                        yield _sse_result({
+                            'status':      'ok',
+                            'pdfs_nuevos': 0,
+                            'pdfs_skip':   0,
+                            'errores':     0,
+                            'total':       0,
+                            'pdf_dir':     self.PDF_DIR,
+                            'mensaje':     'No hay radicados para mostrar en Paso=1.',
+                        })
+                        return
 
                     html = wf_frame.content()
 
@@ -1138,9 +1465,18 @@ class SincronizarMercurioView(APIView):
                     total_paginas = len(paginas_opts) if paginas_opts else 1
                     yield _sse(f'📄 Páginas detectadas: {total_paginas}')
 
-                    pdfs_ok    = 0
-                    pdfs_skip  = 0
-                    errores    = 0
+                    pdfs_ok          = 0
+                    pdfs_skip        = 0
+                    errores          = 0
+                    facturas_ok      = 0
+                    facturas_ocr     = 0
+                    fallback_count   = 0
+                    radicados_proc   = 0
+                    dup_internos     = 0   # PDFs ignorados por ser dup dentro del mismo ZIP
+                    numeros_unicos   = set()
+                    fallback_ids     = []
+                    # sha1 del EML/MSG → lista de radicados (para detectar correos duplicados)
+                    correos_hash   = defaultdict(list)
                     pagina_actual = 0
                     prev_doc_ids = set()
 
@@ -1162,30 +1498,84 @@ class SincronizarMercurioView(APIView):
                                 id_doc   = doc['id']
                                 pdf_dest = os.path.join(self.PDF_DIR, f'{id_doc}.pdf')
                                 eml_dest = os.path.join(self.DOWNLOAD_DIR, f'{id_doc}.eml')
+                                msg_dest = os.path.join(self.DOWNLOAD_DIR, f'{id_doc}.msg')
 
-                                if os.path.exists(pdf_dest):
-                                    yield _sse(f'  [{i+1}/{len(docs_pag)}] {id_doc} — ya procesado')
+                                # Cualquier {radicado}.pdf o {radicado}_N.pdf cuenta como procesado
+                                ya = sorted(
+                                    glob.glob(os.path.join(self.PDF_DIR, f'{id_doc}.pdf')) +
+                                    glob.glob(os.path.join(self.PDF_DIR, f'{id_doc}_*.pdf'))
+                                )
+                                if ya:
+                                    yield _sse(f'  [{i+1}/{len(docs_pag)}] {id_doc} — ya procesado ({len(ya)} pdf)')
                                     pdfs_skip += 1
                                     continue
+
+                                def _log_pdfs(prefix, lista_pdfs):
+                                    nonlocal pdfs_ok, errores, facturas_ok, facturas_ocr, fallback_count, fallback_ids, dup_internos
+                                    if not lista_pdfs:
+                                        yield _sse(f'  {prefix} ⚠️ {id_doc} — sin PDF')
+                                        errores += 1
+                                        return
+                                    for g in lista_pdfs:
+                                        nombre = os.path.basename(g['path'])
+                                        if g.get('fallback'):
+                                            yield _sse(
+                                                f'  {prefix} ⚠️ {nombre} — {g["size"]:,} bytes '
+                                                f'(sin "factura electrónica", se guarda primero)'
+                                            )
+                                            fallback_count += 1
+                                            if id_doc not in fallback_ids:
+                                                fallback_ids.append(id_doc)
+                                        else:
+                                            base_tag = 'factura' if g['total'] == 1 else f'factura {g["index"]}/{g["total"]}'
+                                            partes = [base_tag]
+                                            if g.get('numero'):
+                                                partes.append(f'No. {g["numero"]}')
+                                                numeros_unicos.add(g['numero'])
+                                            if g.get('via_ocr'):
+                                                partes.append('OCR')
+                                            tag = '(' + ', '.join(partes) + ')'
+                                            yield _sse(f'  {prefix} ✅ {nombre} — {g["size"]:,} bytes {tag}')
+                                            facturas_ok += 1
+                                            if g.get('via_ocr'):
+                                                facturas_ocr += 1
+                                        pdfs_ok += 1
+                                        # Reportar duplicados internos descartados
+                                        for nombre_desc, motivo in g.get('descartados', []) or []:
+                                            yield _sse(f'  {prefix} 🗑️  descartado del ZIP: {nombre_desc} ({motivo})')
+                                            dup_internos += 1
 
                                 try:
                                     # Descarga directa via TraerImagen (sin popup)
                                     resultado = descargar_imagen(context, page, wf_frame, doc, pdf_dest)
+                                    prefix = f'[{i+1}/{len(docs_pag)}]'
 
                                     if resultado in ('pdf_directo', 'pdf_link'):
                                         size = os.path.getsize(pdf_dest)
-                                        yield _sse(f'  [{i+1}/{len(docs_pag)}] ✅ {id_doc}.pdf — {size:,} bytes')
+                                        yield _sse(f'  {prefix} ✅ {id_doc}.pdf — {size:,} bytes')
                                         pdfs_ok += 1
+                                        facturas_ok += 1
+                                        radicados_proc += 1
                                     elif resultado in ('eml', 'eml_link'):
                                         os.rename(pdf_dest, eml_dest)
-                                        yield _sse(f'  [{i+1}/{len(docs_pag)}] 📥 {id_doc}.eml — {os.path.getsize(eml_dest):,} bytes')
-                                        pdf_path, size = extraer_pdf_de_eml(eml_dest, id_doc)
-                                        if pdf_path:
-                                            yield _sse(f'  [{i+1}/{len(docs_pag)}] ✅ {id_doc}.pdf — {size:,} bytes')
-                                            pdfs_ok += 1
-                                        else:
-                                            yield _sse(f'  [{i+1}/{len(docs_pag)}] ⚠️ {id_doc} — sin PDF en EML')
-                                            errores += 1
+                                        eml_size = os.path.getsize(eml_dest)
+                                        yield _sse(f'  {prefix} 📥 {id_doc}.eml — {eml_size:,} bytes')
+                                        with open(eml_dest, 'rb') as _fh:
+                                            correos_hash[hashlib.sha1(_fh.read()).hexdigest()].append(id_doc)
+                                        guardados = extraer_pdf_de_eml(eml_dest, id_doc)
+                                        for ev in _log_pdfs(prefix, guardados):
+                                            yield ev
+                                        radicados_proc += 1
+                                    elif resultado == 'msg_link':
+                                        os.rename(pdf_dest, msg_dest)
+                                        msg_size = os.path.getsize(msg_dest)
+                                        yield _sse(f'  {prefix} 📥 {id_doc}.msg — {msg_size:,} bytes')
+                                        with open(msg_dest, 'rb') as _fh:
+                                            correos_hash[hashlib.sha1(_fh.read()).hexdigest()].append(id_doc)
+                                        guardados = extraer_pdf_de_msg(msg_dest, id_doc)
+                                        for ev in _log_pdfs(prefix, guardados):
+                                            yield ev
+                                        radicados_proc += 1
                                 except Exception as e:
                                     yield _sse(f'  [{i+1}/{len(docs_pag)}] ❌ {id_doc} — {e}')
                                     errores += 1
@@ -1200,34 +1590,93 @@ class SincronizarMercurioView(APIView):
                         pagina_actual += 1
                         yield _sse(f'Navegando a página {pagina_actual + 1}...')
 
-                        # Navegar el frame directamente (el select usa top.location
-                        # que destruye el contexto de la página padre)
                         pag_value = paginas_opts[pagina_actual]
                         if pag_base_path:
                             nav_url = f'https://mercurio.finagro.com.co{pag_base_path}{pag_value}'
                         else:
                             nav_url = f'https://mercurio.finagro.com.co/mercurio/ControlDoc/BandejaRutas.jsp?pagBanRutas={pag_value}'
+
+                        # Navegar la página principal a la URL de paginación
+                        # (el select original usa top.location, así que navegamos
+                        # la página completa y re-buscamos el frame).
+                        page.goto(nav_url, timeout=30000, wait_until='domcontentloaded')
+                        page.wait_for_timeout(3000)
+
+                        # Después de navegar, el contenido puede quedar en la
+                        # página principal o dentro de un frame.
                         wf_frame = get_wf_frame()
                         if not wf_frame:
-                            yield _sse('⚠️ Frame perdido, finalizando.')
-                            break
-                        wf_frame.goto(nav_url, timeout=15000)
-                        wf_frame.wait_for_load_state('domcontentloaded')
-                        page.wait_for_timeout(2000)
-                        wf_frame = get_wf_frame()
-                        if not wf_frame:
-                            yield _sse('⚠️ Frame perdido después de cambiar página, finalizando.')
-                            break
+                            # El contenido quedó en la página principal (no hay frame)
+                            # Crear un wrapper que delegue al page directamente.
+                            class _PageAsFrame:
+                                def __init__(self, pg):
+                                    self._pg = pg
+                                def content(self):
+                                    return self._pg.content()
+                                def evaluate(self, expr):
+                                    return self._pg.evaluate(expr)
+                                def locator(self, sel):
+                                    return self._pg.locator(sel)
+                                def wait_for_load_state(self, *a, **kw):
+                                    return self._pg.wait_for_load_state(*a, **kw)
+                                @property
+                                def url(self):
+                                    return self._pg.url
+                            if 'BandejaRutas' in page.url:
+                                yield _sse('   (contenido en página principal, sin frame)')
+                                wf_frame = _PageAsFrame(page)
+                            else:
+                                yield _sse('⚠️ Frame perdido después de cambiar página, finalizando.')
+                                break
 
                     browser.close()
 
+                # ── Resumen final ─────────────────────────────────────────
+                yield _sse('')
+                yield _sse('═══ Resumen ═══')
+                yield _sse(f'📦 Radicados procesados:     {radicados_proc}')
+                yield _sse(f'📄 PDFs guardados:           {pdfs_ok}')
+                yield _sse(f'🧾 Facturas únicas (por No.): {len(numeros_unicos)}')
+                yield _sse(f'   ✅ Con factura detectada:  {facturas_ok}')
+                yield _sse(f'   🔍 Detectada vía OCR:       {facturas_ocr}')
+                yield _sse(f'   ⚠️ Sin factura (fallback):  {fallback_count}')
+                if dup_internos:
+                    yield _sse(f'   🗑️  Duplicados internos del ZIP descartados: {dup_internos}')
+                if pdfs_skip:
+                    yield _sse(f'   ⏭️  Ya existían (skip):     {pdfs_skip}')
+                if errores:
+                    yield _sse(f'   ❌ Errores:                {errores}')
+
+                duplicados = [
+                    (h, ids) for h, ids in correos_hash.items() if len(ids) > 1
+                ]
+                if duplicados:
+                    yield _sse('')
+                    yield _sse('🔁 Correos duplicados (mismo EML/MSG en >1 radicado):')
+                    for _h, ids in duplicados:
+                        yield _sse(f'   • {len(ids)} radicados → {", ".join(ids)}')
+
+                if fallback_ids:
+                    yield _sse('')
+                    yield _sse('⚠️ Radicados sin "factura electrónica" detectada (revisar a mano):')
+                    for rid in fallback_ids:
+                        yield _sse(f'   • {rid}')
+
                 yield _sse_result({
-                    'status':      'ok',
-                    'pdfs_nuevos': pdfs_ok,
-                    'pdfs_skip':   pdfs_skip,
-                    'errores':     errores,
-                    'total':       pdfs_ok + pdfs_skip,
-                    'pdf_dir':     self.PDF_DIR,
+                    'status':           'ok',
+                    'pdfs_nuevos':      pdfs_ok,
+                    'pdfs_skip':        pdfs_skip,
+                    'errores':          errores,
+                    'total':            pdfs_ok + pdfs_skip,
+                    'pdf_dir':          self.PDF_DIR,
+                    'radicados_proc':   radicados_proc,
+                    'facturas_ok':      facturas_ok,
+                    'facturas_ocr':     facturas_ocr,
+                    'fallback_count':   fallback_count,
+                    'dup_internos':     dup_internos,
+                    'facturas_unicas':  sorted(numeros_unicos),
+                    'duplicados':       [{'radicados': ids} for _h, ids in duplicados],
+                    'fallback_ids':     fallback_ids,
                 })
 
             except Exception as exc:

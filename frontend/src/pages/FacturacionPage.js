@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 
 const API = process.env.REACT_APP_API_URL || '/api';
 const AUTH_KEY = 'facturacion_auth';
@@ -377,7 +378,7 @@ function LoginForm({ onLogin }) {
     try {
       const res = await fetch(`${API}/facturacion/facturas/`, { headers: { Authorization: header } });
       if (res.ok) {
-        sessionStorage.setItem(AUTH_KEY, JSON.stringify({ user, pass }));
+        localStorage.setItem(AUTH_KEY, header);
         onLogin(header);
       } else { setError('Credenciales incorrectas.'); }
     } catch { setError('No se pudo conectar con el servidor.'); }
@@ -435,8 +436,109 @@ function mesLabel(mesStr) {
   return `${nombres[parseInt(m, 10) - 1]} ${y}`;
 }
 
+/* ── Botón "i" con modal flotante ─────────────────────────────────────── */
+function InfoButton({ title, children }) {
+  const [open, setOpen] = useState(false);
+
+  // Cerrar con Escape
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        title="Más información"
+        style={{
+          display: 'inline-flex', width: 18, height: 18, borderRadius: '50%',
+          background: '#cfd8dc', color: '#37474f', fontSize: 12, fontWeight: 700,
+          alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+          marginLeft: 6, border: 'none', padding: 0, lineHeight: 1,
+          alignSelf: 'flex-start',
+        }}
+      >i</button>
+
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 9000, padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 12, width: 'min(560px, 96vw)',
+              maxHeight: '88vh', overflow: 'auto', boxShadow: '0 16px 48px rgba(0,0,0,0.30)',
+              fontSize: 14, lineHeight: 1.6, color: '#37474f',
+              textAlign: 'left', textTransform: 'none', letterSpacing: 0, fontWeight: 400,
+            }}
+          >
+            <div style={{
+              padding: '18px 22px', borderBottom: '1px solid #eceff1',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 17, color: '#1565c0' }}>
+                {title || 'Información'}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                style={{
+                  border: 'none', background: 'transparent', cursor: 'pointer',
+                  fontSize: 20, color: '#90a4ae', padding: 4, lineHeight: 1,
+                }}
+                title="Cerrar"
+              >×</button>
+            </div>
+            <div style={{ padding: '18px 22px' }}>{children}</div>
+            <div style={{
+              padding: '12px 22px', borderTop: '1px solid #eceff1',
+              display: 'flex', justifyContent: 'flex-end',
+            }}>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="btn btn-outline"
+                style={{ fontSize: 12, padding: '6px 14px' }}
+              >Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* Helper para una "sección" dentro de la ventana flotante */
+function TooltipRow({ label, children }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{
+        color: '#1565c0', fontWeight: 700, fontSize: 12,
+        textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4,
+      }}>{label}</div>
+      <div style={{ color: '#37474f' }}>{children}</div>
+    </div>
+  );
+}
+
 /* ── Dashboard ───────────────────────────────────────────────────────────── */
 function FacturacionDashboard({ authHeader, onLogout }) {
+  const { pathname } = useLocation();
+  const subRoute = (() => {
+    const m = pathname.match(/^\/facturacion\/?([^/]*)/);
+    const seg = m ? m[1] : '';
+    return ['pipeline', 'facturas'].includes(seg) ? seg : 'resumen';
+  })();
+
   const [facturas, setFacturas]               = useState([]);
   const [total, setTotal]                     = useState(0);
   const [loadingFacturas, setLoadingFacturas] = useState(false);
@@ -605,7 +707,9 @@ function FacturacionDashboard({ authHeader, onLogout }) {
         onLog: (line) => setModal(m => ({ ...m, logs: [...m.logs, line] })),
         onResult: (data) => {
           setMercurioResult(data);
-          const resumen = `─── Completado: ${data.pdfs_nuevos ?? 0} nuevos · ${data.pdfs_skip ?? 0} ya existían · ${data.errores ?? 0} errores ───`;
+          const resumen = data.mensaje
+            ? `─── ${data.mensaje} ───`
+            : `─── Completado: ${data.pdfs_nuevos ?? 0} nuevos · ${data.pdfs_skip ?? 0} ya existían · ${data.errores ?? 0} errores ───`;
           setModal(m => ({ ...m, logs: [...m.logs, resumen], isDone: true, status: data.errores > 0 ? 'error' : 'ok' }));
           cargarListaPDFs();
         },
@@ -800,19 +904,30 @@ function FacturacionDashboard({ authHeader, onLogout }) {
     URL.revokeObjectURL(url);
   };
 
-  const facturasFiltradas = facturas.filter(f => {
+  // Filtrar por rango de fechas (sobre fecha_emision)
+  const facturasEnRango = useMemo(() => {
+    if (!fechaDesde && !fechaHasta) return facturas;
+    return facturas.filter(f => {
+      if (!f.fecha_emision) return false;
+      if (fechaDesde && f.fecha_emision < fechaDesde) return false;
+      if (fechaHasta && f.fecha_emision > fechaHasta) return false;
+      return true;
+    });
+  }, [facturas, fechaDesde, fechaHasta]);
+
+  const facturasFiltradas = facturasEnRango.filter(f => {
     if (!busqueda) return true;
     const q = busqueda.toLowerCase();
     return [(f.proveedor_nit || ''), (f.numero_factura || ''), (f.codigo || '')].some(v => v.toLowerCase().includes(q));
   });
 
-  const valorTotal    = totalValor(facturas);
+  const valorTotal    = totalValor(facturasEnRango);
   const valorFiltrado = totalValor(facturasFiltradas);
 
-  // Agrupar valor y conteo por mes (fecha_emision YYYY-MM)
+  // Agrupar valor y conteo por mes (fecha_emision YYYY-MM) — sobre el rango
   const valorPorMes = (() => {
     const mapa = {};
-    for (const f of facturas) {
+    for (const f of facturasEnRango) {
       const mes = f.fecha_emision ? f.fecha_emision.slice(0, 7) : 'sin-fecha';
       if (!mapa[mes]) mapa[mes] = { valor: 0, count: 0 };
       mapa[mes].valor += parseFloat(f.valor_factura) || 0;
@@ -822,6 +937,27 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([mes, d]) => ({ mes, ...d }));
   })();
+
+  // Presets de filtro
+  const aplicarPreset = (preset) => {
+    const hoy = new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    if (preset === 'mes') {
+      const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+      setFechaDesde(iso(inicio)); setFechaHasta(iso(hoy));
+    } else if (preset === '30') {
+      const d = new Date(hoy); d.setDate(d.getDate() - 30);
+      setFechaDesde(iso(d)); setFechaHasta(iso(hoy));
+    } else if (preset === 'anio') {
+      const inicio = new Date(hoy.getFullYear(), 0, 1);
+      setFechaDesde(iso(inicio)); setFechaHasta(iso(hoy));
+    } else {
+      setFechaDesde(''); setFechaHasta('');
+    }
+    setLimite(10);
+  };
+
+  const filtroActivo = !!(fechaDesde || fechaHasta);
 
   return (
     <div className="page">
@@ -847,50 +983,206 @@ function FacturacionDashboard({ authHeader, onLogout }) {
 
       {/* Banner */}
       <div className="banner" style={{ marginBottom: 24 }}>
+        <button
+          onClick={onLogout}
+          style={{
+            position: 'absolute', top: 12, right: 16, zIndex: 2,
+            fontSize: 12, fontWeight: 600, padding: '6px 14px',
+            background: 'rgba(255,255,255,0.15)', color: '#fff',
+            border: '1px solid rgba(255,255,255,0.35)', borderRadius: 6,
+            cursor: 'pointer',
+          }}
+        >
+          Cerrar sesión
+        </button>
         <div className="banner-text">
           <h1>Facturación Electrónica · DIAN</h1>
           <p>Descarga, clasifica y extrae metadata de facturas electrónicas desde el buzón de Finagro.</p>
         </div>
-        <div className="banner-stats">
-          <div className="banner-stat">
-            <div className="banner-stat-num">{total}</div>
-            <div className="banner-stat-label">Facturas</div>
-          </div>
-          <div className="banner-stat">
-            <div className="banner-stat-num" style={{ fontSize: 16 }}>
-              {valorTotal > 0 ? '$' + Math.round(valorTotal / 1_000_000).toLocaleString('es-CO') + 'M' : '—'}
-            </div>
-            <div className="banner-stat-label">Valor total</div>
-          </div>
+      </div>
+
+      {/* Sub-nav */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+        {[
+          { to: '/facturacion',          label: '📊 Resumen',  end: true },
+          { to: '/facturacion/pipeline', label: '⚙️ Pipeline' },
+          { to: '/facturacion/facturas', label: '🧾 Facturas' },
+          { to: '/facturacion/sql',      label: '🛢 SQL Console' },
+        ].map(t => (
+          <NavLink
+            key={t.to}
+            to={t.to}
+            end={t.end}
+            style={({ isActive }) => ({
+              padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: isActive ? 700 : 500,
+              textDecoration: 'none', whiteSpace: 'nowrap',
+              background: isActive ? '#00853f' : '#f0f0f0',
+              color:      isActive ? '#fff'    : '#555',
+              transition: 'all .15s',
+            })}
+          >
+            {t.label}
+          </NavLink>
+        ))}
+      </div>
+
+      {subRoute === 'facturas' && (<>
+      {/* Filtro de fechas */}
+      <div className="card" style={{
+        margin: '0 0 16px 0', padding: '14px 18px',
+        display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          📅 Filtrar por fecha de emisión
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 12, color: '#666' }}>Desde</label>
+          <input
+            type="date"
+            value={fechaDesde}
+            onChange={e => { setFechaDesde(e.target.value); setLimite(10); }}
+            style={{ fontSize: 12, padding: '5px 8px', border: '1px solid #ccc', borderRadius: 4 }}
+          />
+          <label style={{ fontSize: 12, color: '#666' }}>Hasta</label>
+          <input
+            type="date"
+            value={fechaHasta}
+            onChange={e => { setFechaHasta(e.target.value); setLimite(10); }}
+            style={{ fontSize: 12, padding: '5px 8px', border: '1px solid #ccc', borderRadius: 4 }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: '5px 10px' }} onClick={() => aplicarPreset('mes')}>Este mes</button>
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: '5px 10px' }} onClick={() => aplicarPreset('30')}>Últimos 30 días</button>
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: '5px 10px' }} onClick={() => aplicarPreset('anio')}>Este año</button>
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: '5px 10px', opacity: filtroActivo ? 1 : 0.5 }} onClick={() => aplicarPreset('clear')} disabled={!filtroActivo}>Limpiar</button>
+        </div>
+        {filtroActivo && (
+          <div style={{
+            width: '100%', fontSize: 11, color: '#1565c0', background: '#e3f2fd',
+            padding: '6px 10px', borderRadius: 4, marginTop: 4,
+          }}>
+            Mostrando <strong>{facturasEnRango.length}</strong> de <strong>{facturas.length}</strong> facturas en el rango seleccionado.
+          </div>
+        )}
       </div>
 
       {/* KPIs */}
       {(() => {
-        const sinFechaCount = facturas.filter(f => !f.fecha_emision).length;
+        const sinFechaCount  = facturasEnRango.filter(f => !f.fecha_emision).length;
+        const sinFechaTotal  = facturas.filter(f => !f.fecha_emision).length;
+        const totalRango     = facturasEnRango.length;
+        const totalAbsoluto  = facturas.length;
+        const factiaTotal    = stats?.total_facturas_extraidas ?? null;
+        const rangoTexto     = filtroActivo
+          ? `${fechaDesde || 'inicio'} → ${fechaHasta || 'hoy'}`
+          : 'todo el histórico';
+        const tooltips = {
+          total: (
+            <>
+              <TooltipRow label="Qué muestra">
+                Cantidad de facturas que ya están almacenadas en la base de datos del Automation Hub.
+              </TooltipRow>
+              <TooltipRow label="Cómo se calcula">
+                Cuenta cada registro cuya <strong>fecha de emisión</strong> cae dentro del rango seleccionado ({rangoTexto}). Las facturas sin fecha no se incluyen cuando hay filtro activo.
+              </TooltipRow>
+              <TooltipRow label="Origen del dato">
+                Tabla <code style={{ background: '#eceff1', color: '#37474f', padding: '1px 6px', borderRadius: 3, fontFamily: 'monospace' }}>facturacion_factura</code> · sincronizada desde FactIA en cada ejecución del pipeline.
+              </TooltipRow>
+              {filtroActivo && (
+                <TooltipRow label="Total sin filtro">
+                  {totalAbsoluto.toLocaleString('es-CO')} facturas en todo el histórico.
+                </TooltipRow>
+              )}
+            </>
+          ),
+          factia: (
+            <>
+              <TooltipRow label="Qué muestra">
+                Total acumulado en el servicio externo <strong>FactIA</strong>, que es el origen de los datos (lee el buzón DIAN y procesa los XMLs).
+              </TooltipRow>
+              <TooltipRow label="Por qué no cambia con el filtro">
+                Es una cifra global del servicio externo. FactIA no segmenta por rango desde la API de stats; cualquier filtrado se aplica del lado del Hub.
+              </TooltipRow>
+              <TooltipRow label="Si difiere de Total facturas">
+                Significa que hay registros en FactIA que aún no se sincronizaron al Hub. El pipeline reintenta automáticamente; si la diferencia persiste, revisa la pestaña <em>Cron log</em>.
+              </TooltipRow>
+            </>
+          ),
+          valor: (
+            <>
+              <TooltipRow label="Qué muestra">
+                Suma del campo <strong>Valor factura</strong> de las facturas que están dentro del rango seleccionado ({rangoTexto}).
+              </TooltipRow>
+              <TooltipRow label="Cómo se calcula">
+                Sumatoria simple en pesos colombianos (COP). Las facturas sin fecha de emisión quedan fuera; las que vengan en otra moneda se suman tal como vienen, sin conversión.
+              </TooltipRow>
+              <TooltipRow label="Formato">
+                Pesos colombianos con separador de miles. La cifra se redondea a entero.
+              </TooltipRow>
+            </>
+          ),
+          sinFecha: (
+            <>
+              <TooltipRow label="Qué muestra">
+                Facturas que llegaron al sistema sin un campo <strong>fecha de emisión</strong> reconocible (XML mal formado, plantilla atípica del proveedor, etc.).
+              </TooltipRow>
+              <TooltipRow label="Acción sugerida">
+                Haz clic en la tarjeta para ver el detalle de los correos asociados y revisarlas manualmente.
+              </TooltipRow>
+              {filtroActivo ? (
+                <TooltipRow label="Con filtro activo">
+                  Este número refleja solo lo que cae <em>dentro del rango</em>. Sin filtro hay <strong>{sinFechaTotal}</strong> facturas sin fecha en total.
+                </TooltipRow>
+              ) : (
+                <TooltipRow label="Por qué importa">
+                  Sin fecha de emisión, una factura no aparece en los reportes mensuales ni en la sumatoria de "Valor total". Conviene revisarlas para no perder visibilidad.
+                </TooltipRow>
+              )}
+            </>
+          ),
+        };
+
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
             {[
-              { icon: '🧾', label: 'Total facturas',      value: total,                                         bg: '#e3f2fd', color: '#1565c0' },
-              { icon: '📦', label: 'Facturas en FactIA',  value: stats?.total_facturas_extraidas ?? '—',        bg: '#f3e5f5', color: '#6a1b9a' },
-              { icon: '💰', label: 'Valor total',          value: valorTotal > 0 ? fmtCOP(valorTotal) : '—',    bg: '#e8f5e9', color: '#2e7d32' },
+              {
+                icon: '🧾', label: 'Total facturas', value: totalRango,
+                bg: '#e3f2fd', color: '#1565c0',
+                title: 'Total facturas',
+                tooltip: tooltips.total,
+              },
+              {
+                icon: '📦', label: 'Facturas en FactIA', value: factiaTotal != null ? factiaTotal.toLocaleString('es-CO') : '—',
+                bg: '#f3e5f5', color: '#6a1b9a',
+                title: 'Facturas en FactIA',
+                tooltip: tooltips.factia,
+              },
+              {
+                icon: '💰', label: 'Valor total', value: valorTotal > 0 ? fmtCOP(valorTotal) : '—',
+                bg: '#e8f5e9', color: '#2e7d32',
+                title: 'Valor total facturado',
+                tooltip: tooltips.valor,
+              },
             ].map(k => (
-              <div key={k.label} className="card" style={{ margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div key={k.label} className="card" style={{ margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
                 <div style={{ width: 48, height: 48, borderRadius: 12, background: k.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>{k.icon}</div>
-                <div>
+                <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 22, fontWeight: 800, color: k.color, lineHeight: 1.1 }}>{k.value}</div>
-                  <div style={{ fontSize: 11, color: '#888', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{k.label}</div>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center' }}>
+                    <span>{k.label}</span>
+                    <InfoButton title={k.title}>{k.tooltip}</InfoButton>
+                  </div>
                 </div>
               </div>
             ))}
 
             {/* Tarjeta de advertencia — botón si hay facturas sin fecha */}
             <div className="card" style={{
-              margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16,
+              margin: 0, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16, position: 'relative',
               ...(sinFechaCount > 0 ? { cursor: 'pointer', border: '1.5px solid #ffe082' } : {}),
             }}
               onClick={sinFechaCount > 0 ? () => setVerSinFecha(true) : undefined}
-              title={sinFechaCount > 0 ? 'Haz clic para ver las facturas sin fecha de emisión' : undefined}
             >
               <div style={{
                 width: 48, height: 48, borderRadius: 12, background: sinFechaCount > 0 ? '#fff8e1' : '#f5f5f5',
@@ -902,8 +1194,9 @@ function FacturacionDashboard({ authHeader, onLogout }) {
                 <div style={{ fontSize: 22, fontWeight: 800, color: sinFechaCount > 0 ? '#f57f17' : '#aaa', lineHeight: 1.1 }}>
                   {sinFechaCount > 0 ? sinFechaCount : '—'}
                 </div>
-                <div style={{ fontSize: 11, color: '#888', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Sin fecha emisión
+                <div style={{ fontSize: 11, color: '#888', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center' }}>
+                  <span>Sin fecha emisión</span>
+                  <InfoButton title="Facturas sin fecha de emisión">{tooltips.sinFecha}</InfoButton>
                 </div>
               </div>
               {sinFechaCount > 0 && (
@@ -919,6 +1212,9 @@ function FacturacionDashboard({ authHeader, onLogout }) {
         );
       })()}
 
+      </>)}
+
+      {subRoute === 'resumen' && (<>
       {/* Valor por mes */}
       {valorPorMes.length > 0 && (() => {
         const maxVal = Math.max(...valorPorMes.map(m => m.valor), 1);
@@ -955,7 +1251,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       {/* ── Tareas programadas ── */}
       <div className="section-header" style={{ marginBottom: 12 }}>
         <div className="section-title">Tareas programadas</div>
-        <div style={{ fontSize: 11, color: '#888' }}>Lunes a viernes · Automático</div>
+        <div style={{ fontSize: 11, color: '#888' }}>Todos los días · Automático</div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
@@ -1117,10 +1413,21 @@ function FacturacionDashboard({ authHeader, onLogout }) {
         )}
       </div>
 
+      </>)}
+
+      {subRoute === 'pipeline' && (<>
       {/* Pipeline */}
       <div className="section-header">
         <div className="section-title">Pipeline de procesamiento</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <a
+            href="/facturacion/sql"
+            className="btn btn-outline"
+            style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+            title="Validar los KPIs y lanzar consultas SQL sobre la base de datos"
+          >
+            🛢 SQL Console
+          </a>
           <a
             href={`${API}/facturacion/descargar-instalador/`}
             download
@@ -1171,7 +1478,6 @@ function FacturacionDashboard({ authHeader, onLogout }) {
               </button>
             )}
           </div>
-          <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={onLogout}>Cerrar sesión</button>
         </div>
       </div>
 
@@ -1313,6 +1619,9 @@ function FacturacionDashboard({ authHeader, onLogout }) {
         </div>
       )}
 
+      </>)}
+
+      {subRoute === 'facturas' && (<>
       {/* Tabla */}
       <div className="section-header">
         <div className="section-title">Facturas extraídas ({total})</div>
@@ -1386,6 +1695,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           </>
         )}
       </div>
+      </>)}
     </div>
   );
 }
@@ -1404,13 +1714,27 @@ function SpinnerIcon({ size = 14, color = '#fff' }) {
 /* ── Export ──────────────────────────────────────────────────────────────── */
 export default function FacturacionPage() {
   const [authHeader, setAuthHeader] = useState(() => {
-    const saved = sessionStorage.getItem(AUTH_KEY);
-    if (!saved) return null;
-    const { user, pass } = JSON.parse(saved);
-    return getBasicAuthHeader(user, pass);
+    const saved = localStorage.getItem(AUTH_KEY);
+    if (saved && saved.startsWith('Basic ')) return saved;
+    // Migración desde el formato antiguo (sessionStorage con JSON {user,pass})
+    const legacy = sessionStorage.getItem(AUTH_KEY);
+    if (legacy) {
+      try {
+        const { user, pass } = JSON.parse(legacy);
+        const header = getBasicAuthHeader(user, pass);
+        localStorage.setItem(AUTH_KEY, header);
+        sessionStorage.removeItem(AUTH_KEY);
+        return header;
+      } catch { /* ignore */ }
+    }
+    return null;
   });
 
-  const handleLogout = () => { sessionStorage.removeItem(AUTH_KEY); setAuthHeader(null); };
+  const handleLogout = () => {
+    localStorage.removeItem(AUTH_KEY);
+    sessionStorage.removeItem(AUTH_KEY);
+    setAuthHeader(null);
+  };
 
   if (!authHeader) return <LoginForm onLogin={setAuthHeader} />;
   return <FacturacionDashboard authHeader={authHeader} onLogout={handleLogout} />;
