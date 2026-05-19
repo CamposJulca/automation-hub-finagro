@@ -8,6 +8,7 @@ from .views import (
     SincronizarMercurioView, MercurioPDFsListView, DescargarMercurioPDFView,
     DescargarMercurioPDFsMasivoView,
 )
+from .sql_views import SqlRunView, SqlSchemaView
 
 urlpatterns = [
     path('descargar/',                  DescargarFacturasView.as_view(),  name='facturacion-descargar'),
@@ -30,4 +31,8 @@ urlpatterns = [
     path('mercurio-pdfs/',              MercurioPDFsListView.as_view(),      name='facturacion-mercurio-pdfs-lista'),
     path('mercurio-pdfs/masivo/',       DescargarMercurioPDFsMasivoView.as_view(), name='facturacion-mercurio-pdfs-masivo'),
     path('mercurio-pdfs/<str:nombre>/', DescargarMercurioPDFView.as_view(), name='facturacion-mercurio-pdf'),
+
+    # SQL playground (módulo de consultas)
+    path('sql/run/',    SqlRunView.as_view(),    name='facturacion-sql-run'),
+    path('sql/schema/', SqlSchemaView.as_view(), name='facturacion-sql-schema'),
 ]

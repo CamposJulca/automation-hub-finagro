@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage';
 import SarlaftPage from './pages/SarlaftPage';
 import InnovacionPage from './InnovacionPage';
 import FacturacionPage from './pages/FacturacionPage';
+import FacturacionSqlPage from './pages/FacturacionSqlPage';
 import ICRPage from './pages/ICRPage';
 import SigaPage from './pages/SigaPage';
 
@@ -41,7 +42,8 @@ function navClass({ isActive }) {
 
 function Layout() {
   const { pathname } = useLocation();
-  const title = PAGE_TITLES[pathname] || 'Automation Hub · Finagro';
+  const title = PAGE_TITLES[pathname]
+    || (pathname.startsWith('/facturacion') ? PAGE_TITLES['/facturacion'] : 'Automation Hub · Finagro');
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -119,10 +121,11 @@ function Layout() {
         <Routes>
           <Route path="/"            element={<HomePage />} />
           <Route path="/sarlaft"     element={<SarlaftPage />} />
-          <Route path="/facturacion" element={<FacturacionPage />} />
-          <Route path="/innovacion"  element={<InnovacionPage />} />
-          <Route path="/icr"         element={<ICRPage />} />
-          <Route path="/siga"        element={<SigaPage />} />
+          <Route path="/facturacion/sql" element={<FacturacionSqlPage />} />
+          <Route path="/facturacion/*"   element={<FacturacionPage />} />
+          <Route path="/innovacion"      element={<InnovacionPage />} />
+          <Route path="/icr"             element={<ICRPage />} />
+          <Route path="/siga"            element={<SigaPage />} />
         </Routes>
       </div>
     </div>
