@@ -552,8 +552,10 @@ class DescargarScriptView(APIView):
     Sirve el script PowerShell generado con la URL del servidor actual y las
     credenciales del usuario técnico inyectadas desde PS1_AUTH_USER /
     PS1_AUTH_PASS. Responde 503 si las credenciales no están configuradas.
+    Requiere autenticación: el usuario debe loguearse al portal para
+    obtener su copia del script.
     """
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from django.http import HttpResponse
