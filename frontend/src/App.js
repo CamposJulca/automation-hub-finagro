@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import './App.css';
 import HomePage from './pages/HomePage';
-import SarlaftPage from './pages/SarlaftPage';
 import InnovacionPage from './InnovacionPage';
 import FacturacionPage from './pages/FacturacionPage';
 import FacturacionSqlPage from './pages/FacturacionSqlPage';
@@ -11,7 +10,6 @@ import SigaPage from './pages/SigaPage';
 
 const PAGE_TITLES = {
   '/': 'Panel de Control · Automatizaciones',
-  '/sarlaft': 'SARLAFT · Certificados Cámara de Comercio',
   '/innovacion': 'Innovación · Priorización de Necesidades',
   '/facturacion': 'Facturación Electrónica · DIAN',
   '/icr': 'ICR · Incentivo a la Capitalización Rural',
@@ -23,7 +21,6 @@ const NAV_MAIN = [
 ];
 
 const NAV_MODULES = [
-  { icon: '🔍', label: 'SARLAFT', to: '/sarlaft', status: 'activo' },
   { icon: '🧾', label: 'Facturación', to: '/facturacion', status: 'activo' },
   { icon: '💡', label: 'Innovación', to: '/innovacion', status: 'activo' },
   { icon: '📊', label: 'ICR', to: '/icr', status: 'activo' },
@@ -120,7 +117,6 @@ function Layout() {
 
         <Routes>
           <Route path="/"            element={<HomePage />} />
-          <Route path="/sarlaft"     element={<SarlaftPage />} />
           <Route path="/facturacion/sql" element={<FacturacionSqlPage />} />
           <Route path="/facturacion/*"   element={<FacturacionPage />} />
           <Route path="/innovacion"      element={<InnovacionPage />} />

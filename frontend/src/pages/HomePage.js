@@ -2,18 +2,6 @@ import { Link } from 'react-router-dom';
 
 const MODULES = [
   {
-    id: 'sarlaft',
-    name: 'SARLAFT',
-    fullName: 'Sistema de Administración del Riesgo de LA/FT',
-    icon: '🔍',
-    iconBg: '#e8f2ec',
-    description:
-      'Extracción automática de datos de certificados de Cámara de Comercio para validación de listas restrictivas y análisis de riesgo de lavado de activos.',
-    processes: ['Cruce de información', 'Listas restrictivas', 'Análisis de riesgo'],
-    status: 'activo',
-    route: '/sarlaft',
-  },
-  {
     id: 'facturacion',
     name: 'Facturación Electrónica',
     fullName: 'Gestión de Facturas Electrónicas DIAN',
@@ -54,7 +42,6 @@ const MODULES = [
 const API_ENDPOINTS = [
   { method: 'GET',  url: '/api/executions/',              desc: 'Historial de ejecuciones' },
   { method: 'GET',  url: '/api/logs/',                    desc: 'Logs de ejecución' },
-  { method: 'POST', url: '/api/sarlaft/certificados/',    desc: 'Extraer certificados Cámara de Comercio' },
   { method: 'POST', url: '/api/facturacion/descargar/',   desc: 'Descargar facturas desde buzón de correo' },
   { method: 'POST', url: '/api/facturacion/procesar/',    desc: 'Clasificar ZIPs y extraer metadata XML' },
   { method: 'GET',  url: '/api/facturacion/facturas/',    desc: 'Listar facturas procesadas' },
@@ -107,13 +94,6 @@ export default function HomePage() {
           <div className="info-card-text">
             <strong>PostgreSQL</strong>
             <span>Base de datos · Activa</span>
-          </div>
-        </div>
-        <div className="info-card">
-          <div className="info-card-icon" style={{ background: '#fff8e1' }}>🤖</div>
-          <div className="info-card-text">
-            <strong>nlp-camara</strong>
-            <span>Servicio NLP · Activo</span>
           </div>
         </div>
         <div className="info-card">
