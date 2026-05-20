@@ -17,15 +17,6 @@ services:
     networks:
       - finagro-net
 
-  # ── Servicio NLP (interno — solo accesible por backend) ──────────────────────
-  nlp-camara:
-    build:
-      context: ../nlp-camara
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    networks:
-      - finagro-net
-
   # ── Servicio FactIA (interno — descarga y procesa facturas electrónicas) ─────
   factia:
     build:
@@ -50,30 +41,11 @@ services:
     environment:
       DATABASE_URL:    "true"
       DB_HOST:         db
-      NLP_CAMARA_URL:  http://nlp-camara:8001
       FACTIA_URL:      http://factia:8002
       ALLOWED_HOSTS:   "*"
     depends_on:
       - db
-      - nlp-camara
       - factia
-    restart: unless-stopped
-    networks:
-      - finagro-net
-
-  # ── Servicio SARLAFT (independiente) ─────────────────────────────────────────
-  sarlaft:
-    build:
-      context: ../sarlaft
-      dockerfile: docker/Dockerfile
-    environment:
-      DEBUG:          "False"
-      ALLOWED_HOSTS:  "*"
-      NLP_CAMARA_URL: http://nlp-camara:8001
-    volumes:
-      - sarlaft_db:/app/db
-    depends_on:
-      - nlp-camara
     restart: unless-stopped
     networks:
       - finagro-net
@@ -98,12 +70,10 @@ services:
     ports:
       - "9000:9000"   # automation-hub-finagro  → Portal principal
       - "9001:9001"   # facturacion-electronica  → Módulo Facturación
-      - "9002:9002"   # sarlaft                  → Módulo SARLAFT
       - "9003:9003"   # gestion-administrativa   → Módulo Gestión Admin.
       - "9004:9004"   # mesa-ayuda               → Módulo Mesa de Ayuda
     depends_on:
       - backend
-      - sarlaft
       - siga
     restart: unless-stopped
     networks:
@@ -114,4 +84,3 @@ volumes:
   factia_data:
   siga_db:
   siga_landing:
-  sarlaft_db:

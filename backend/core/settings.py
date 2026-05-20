@@ -117,5 +117,4 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
 
 # Servicios externos
-NLP_CAMARA_URL = os.getenv('NLP_CAMARA_URL', 'http://localhost:8001')
 FACTIA_URL     = os.getenv('FACTIA_URL',     'http://localhost:8002')
