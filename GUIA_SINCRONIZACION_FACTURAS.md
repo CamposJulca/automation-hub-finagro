@@ -8,8 +8,8 @@ Descarga los PDFs de facturas electrónicas desde el portal Automation Hub a tu 
 
 - Windows 10 / 11
 - PowerShell 5.1 o superior (incluido en Windows por defecto)
-- Acceso a internet (para conectarse al portal vía ngrok)
-- Credenciales del portal (usuario y contraseña)
+- Acceso a internet (para conectarse al portal)
+- Credenciales del portal Automation Hub Finagro
 
 ---
 
@@ -17,8 +17,11 @@ Descarga los PDFs de facturas electrónicas desde el portal Automation Hub a tu 
 
 ### 1. Obtener el script
 
-Descarga el archivo `SincronizarFacturas.ps1` desde el servidor o cópialo a tu máquina.
-Ruta sugerida: `C:\Users\cdcampos\Documents\SincronizarFacturas.ps1`
+1. Inicia sesión en el portal de Automation Hub Finagro.
+2. Ve a la sección **Facturación** → botón **Descargar script de sincronización**.
+3. Guarda el archivo `SincronizarFacturas.ps1` en tu carpeta de trabajo (por ejemplo, `Documentos`).
+
+El script descargado ya viene preconfigurado con el servidor y las credenciales del usuario técnico. **No necesitas editar credenciales manualmente.**
 
 ### 2. Habilitar ejecución de scripts (solo la primera vez)
 
@@ -30,18 +33,15 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 Responde `S` (Sí) cuando te pregunte.
 
-### 3. Verificar la configuración
+### 3. Personalizar destino (opcional)
 
-Abre el script con el Bloc de notas o VS Code y revisa las primeras líneas:
+Si quieres cambiar dónde se guardan los PDFs, abre el script con Bloc de notas o VS Code y ajusta la variable `$DESTINO`:
 
 ```powershell
-$BASE_URL  = "https://facturacion-electronica.ngrok.io"
-$USUARIO   = "admin"
-$PASSWORD  = "Finagro2026!"
-$DESTINO   = "C:\Users\cdcampos\Documents\FacturasElectronicas"
+$DESTINO = "C:\Users\<TU_USUARIO>\Documents\FacturasElectronicas"
 ```
 
-Ajusta `$DESTINO` si quieres guardar los archivos en otra carpeta.
+El valor por defecto guarda los PDFs en `%USERPROFILE%\Documents\FacturasElectronicas`.
 
 ---
 
@@ -50,7 +50,7 @@ Ajusta `$DESTINO` si quieres guardar los archivos en otra carpeta.
 Abre PowerShell, navega a la carpeta donde está el script y ejecútalo:
 
 ```powershell
-cd C:\Users\cdcampos\Documents
+cd $HOME\Documents
 .\SincronizarFacturas.ps1
 ```
 
@@ -60,13 +60,13 @@ Verás una salida como esta:
 ==========================================
   Sincronizacion Facturas Electronicas
 ==========================================
-Destino : C:\Users\cdcampos\Documents\FacturasElectronicas
-Servidor: https://facturacion-electronica.ngrok.io
+Destino : C:\Users\<TU_USUARIO>\Documents\FacturasElectronicas
+Servidor: <URL del portal>
 
 Consultando semanas disponibles... OK (13 semanas)
-  [↓] 2026/01_january/semana_01  (10 facturas)... OK (8 PDFs)
-  [↓] 2026/01_january/semana_02  (35 facturas)... OK (33 PDFs)
-  [=] 2026/02_february/semana_06  (48 PDFs ya descargados)
+  [>>] 2026/01_january/semana_01  (10 facturas)... OK (8 PDFs)
+  [>>] 2026/01_january/semana_02  (35 facturas)... OK (33 PDFs)
+  [OK] 2026/02_february/semana_06  (48 PDFs ya descargados)
   ...
 
 ==========================================
@@ -83,7 +83,7 @@ El script **no repite descargas**: si una semana ya tiene PDFs, la omite. Solo d
 ## Estructura de carpetas resultante
 
 ```
-C:\Users\cdcampos\Documents\FacturasElectronicas\
+<DESTINO>\
   2026\
     01_january\
       semana_01\
@@ -118,7 +118,7 @@ Para que el script corra automáticamente cada día sin intervención:
    - En **Configuración avanzada del desencadenador**: marcar *Repetir solo en días de semana* (lunes a viernes)
    - **Acción:** Iniciar un programa
      - Programa: `powershell.exe`
-     - Argumentos: `-WindowStyle Hidden -File "C:\Users\cdcampos\Documents\SincronizarFacturas.ps1"`
+     - Argumentos: `-WindowStyle Hidden -File "%USERPROFILE%\Documents\SincronizarFacturas.ps1"`
 4. Marcar **Ejecutar tanto si el usuario inició sesión como si no**
 5. Clic en **Finalizar**
 
@@ -126,7 +126,7 @@ Para que el script corra automáticamente cada día sin intervención:
 
 ## Trasladar a la unidad de red (cuando tengas permisos)
 
-Cuando tengas acceso a `K:\Dirección de Servicios Generales\...\FACTURACION\1 RADICADAS\`, cambia la variable en el script:
+Cuando tengas acceso a `K:\Dirección de Servicios Generales\...\FACTURACION\1 RADICADAS\`, cambia la variable `$DESTINO` en el script:
 
 ```powershell
 $DESTINO = "K:\Dirección de Servicios Generales\...\FACTURACION\1 RADICADAS\FacturasElectronicas"
@@ -141,7 +141,7 @@ El script funciona igual con rutas de red. Asegúrate de que la unidad esté map
 | Síntoma | Causa probable | Solución |
 |---|---|---|
 | `No se puede cargar el archivo porque la ejecución de scripts está deshabilitada` | Política de ejecución no configurada | Ejecutar `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` |
-| `ERROR: 401` | Contraseña incorrecta | Revisar `$USUARIO` y `$PASSWORD` en el script |
-| `ERROR: No se puede conectar al servidor` | URL ngrok cambió o no está activa | Verificar que el portal esté en línea y actualizar `$BASE_URL` |
+| `ERROR: 401` | Credenciales rotadas o script viejo | Volver a descargar el script desde el portal autenticado |
+| `ERROR: No se puede conectar al servidor` | URL del portal cambió o portal no disponible | Volver a descargar el script desde el portal autenticado |
 | PDFs descargados pero la semana se vuelve a descargar | La carpeta existe pero vacía | Eliminar la carpeta vacía y volver a ejecutar |
 | Semana muestra 0 PDFs | Facturas aún no procesadas en el servidor | Ejecutar primero el paso 2 (Procesar) desde la página web |

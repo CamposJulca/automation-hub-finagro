@@ -414,8 +414,8 @@ _PS1_TEMPLATE = """\
 
 # -- Configuracion ------------------------------------------------------------
 $BASE_URL  = "{base_url}"
-$USUARIO   = "admin"
-$PASSWORD  = "Finagro2026!"
+$USUARIO   = "{ps1_user}"
+$PASSWORD  = "{ps1_pass}"
 $DESTINO   = "C:\\Users\\$env:USERNAME\\Documents\\FacturasElectronicas"
 # -----------------------------------------------------------------------------
 
@@ -549,17 +549,29 @@ def _bat_content(script_url):
 class DescargarScriptView(APIView):
     """
     GET /api/facturacion/descargar-script/
-    Sirve el script PowerShell generado con la URL del servidor actual.
-    No requiere autenticacion (el .bat lo descarga antes de tener sesion).
+    Sirve el script PowerShell generado con la URL del servidor actual y las
+    credenciales del usuario técnico inyectadas desde PS1_AUTH_USER /
+    PS1_AUTH_PASS. Responde 503 si las credenciales no están configuradas.
     """
     permission_classes = []
 
     def get(self, request):
         from django.http import HttpResponse
+        ps1_user = os.environ.get('PS1_AUTH_USER', '')
+        ps1_pass = os.environ.get('PS1_AUTH_PASS', '')
+        if not ps1_user or not ps1_pass:
+            return Response(
+                {'detail': 'PowerShell script credentials not configured'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         scheme = request.META.get('HTTP_X_FORWARDED_PROTO', request.scheme)
         host   = request.META.get('HTTP_X_FORWARDED_HOST', request.get_host())
         base_url = f'{scheme}://{host}'
-        content = _PS1_TEMPLATE.format(base_url=base_url)
+        content = _PS1_TEMPLATE.format(
+            base_url=base_url,
+            ps1_user=ps1_user,
+            ps1_pass=ps1_pass,
+        )
         resp = HttpResponse(content.encode('ascii'), content_type='text/plain; charset=utf-8')
         resp['Content-Disposition'] = 'attachment; filename="SincronizarFacturas.ps1"'
         return resp
