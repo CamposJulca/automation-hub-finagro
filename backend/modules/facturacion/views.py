@@ -17,6 +17,13 @@ from logs.models import ExecutionLog
 from .models import FacturaElectronica
 from .serializers import FacturaElectronicaSerializer
 from .client import FactIAClient, FACTIA_URL
+from .mercurio_session import (
+    MercurioLoginError, MercurioNavigationError, MercurioPasoError,
+    extraer_docs_de_html, cerrar_popups_huerfanos, get_wf_frame,
+    descargar_imagen,
+    login as mercurio_login,
+    abrir_workflow, filtrar_paso, detectar_paginacion, navegar_a_pagina,
+)
 
 
 def _get_or_create_automation():
@@ -1193,99 +1200,6 @@ class SincronizarMercurioView(APIView):
             return f'event: error\ndata: {msg}\n\n'
 
         # ── helpers internos ───────────────────────────────────────────────
-        def extraer_docs_de_html(html):
-            doc_blocks = re.findall(r'function selectDoc(\d+)\(\)\s*\{(.*?)\}', html, re.DOTALL)
-            docs = []
-            for idx, block in doc_blocks:
-                id_doc = re.search(r"idDocumento\s*=\s*'([^']+)'", block)
-                if id_doc:
-                    docs.append({'idx': idx, 'id': id_doc.group(1)})
-            return docs
-
-        def cerrar_popups_huerfanos(context, page):
-            """Cierra cualquier página extra (popups) que no sea la principal."""
-            for p in context.pages:
-                if p != page:
-                    try:
-                        p.close()
-                    except Exception:
-                        pass
-
-        def descargar_imagen(context, page, wf_frame, doc, dest, log_fn=None):
-            """
-            Descarga el documento (imagen/PDF) directamente via TraerImagen servlet,
-            usando el API de Playwright (context.request) para preservar cookies y
-            sesión completa del navegador.
-            Si TraerImagen devuelve directamente un PDF, lo guarda.
-            Si devuelve HTML, busca links a EML/PDF dentro del HTML.
-            """
-            n      = doc['idx']
-            id_doc = doc['id']
-
-            # Seleccionar el documento en el frame
-            cerrar_popups_huerfanos(context, page)
-            wf_frame.evaluate(f'selectDoc{n}();')
-            page.wait_for_timeout(500)
-
-            # Leer variables JS del documento seleccionado
-            try:
-                id_documento = wf_frame.evaluate('idDocumento')
-                tip_documento = wf_frame.evaluate('tipDocumento')
-            except Exception:
-                id_documento = id_doc
-                tip_documento = ''
-
-            base_url = 'https://mercurio.finagro.com.co'
-            traer_url = f'{base_url}/mercurio/servlet/TraerImagen?documento={id_documento}&tipoDocumento={tip_documento}&imagenConsulta=S'
-
-            # Usar Playwright API request (comparte cookies/sesión con el navegador)
-            api_resp = context.request.get(traer_url, timeout=30000)
-
-            if api_resp.status != 200:
-                raise Exception(f'TraerImagen HTTP {api_resp.status}')
-
-            ct = api_resp.headers.get('content-type', '')
-            body = api_resp.body()
-
-            # Si devuelve PDF directo, guardarlo
-            if 'application/pdf' in ct:
-                with open(dest, 'wb') as f:
-                    f.write(body)
-                return 'pdf_directo'
-
-            # Si devuelve HTML, buscar links a EML o PDF
-            encoding = 'latin-1' if 'ISO-8859-1' in ct else 'utf-8'
-            html_content = body.decode(encoding, errors='replace')
-
-            # Buscar link a PDF, EML o MSG en href= o src= (con o sin comillas)
-            url_match = re.search(r'(?:href|src)=["\']?([^\s"\'<>]+\.pdf)["\']?', html_content, re.IGNORECASE)
-            if not url_match:
-                url_match = re.search(r'(?:href|src)=["\']?([^\s"\'<>]+\.eml)["\']?', html_content, re.IGNORECASE)
-            if not url_match:
-                url_match = re.search(r'(?:href|src)=["\']?([^\s"\'<>]+\.msg)["\']?', html_content, re.IGNORECASE)
-
-            if url_match:
-                file_url = url_match.group(1)
-                if not file_url.startswith('http'):
-                    file_url = base_url + ('' if file_url.startswith('/') else '/') + file_url
-                resp_file = context.request.get(file_url, timeout=60000)
-                if resp_file.status != 200:
-                    raise Exception(f'Download HTTP {resp_file.status} para {file_url}')
-                with open(dest, 'wb') as f:
-                    f.write(resp_file.body())
-                lower_url = file_url.lower()
-                if lower_url.endswith('.pdf'):
-                    ext = 'pdf'
-                elif lower_url.endswith('.msg'):
-                    ext = 'msg'
-                else:
-                    ext = 'eml'
-                return f'{ext}_link'
-
-            # Log HTML para diagnóstico (primeros 500 chars)
-            snippet = html_content[:500].replace('\n', ' ')
-            raise Exception(f'Sin EML/PDF en TraerImagen (Content-Type: {ct}) HTML: {snippet}')
-
         def extraer_pdf_de_eml(eml_path, radicado):
             """
             Recolecta TODOS los PDFs adjuntos al EML (incluyendo los que vienen
@@ -1351,99 +1265,39 @@ class SincronizarMercurioView(APIView):
                     page.on('dialog', lambda d: d.accept())
 
                     # Login
-                    yield _sse('🔐 Iniciando login en Mercurio...')
-                    page.goto(self.MERCURIO_URL, timeout=30000, wait_until='domcontentloaded')
-                    page.wait_for_timeout(2000)
-                    page.locator("input[name='asri']").click()
-                    page.locator("input[name='asri']").type(self.MERCURIO_USUARIO, delay=80)
-                    page.locator("input[name='ntrsn']").click()
-                    page.locator("input[name='ntrsn']").type(self.MERCURIO_CLAVE, delay=80)
-                    page.wait_for_timeout(500)
-                    with page.expect_response(lambda r: 'ConsultarUsuarioLogueado' in r.url, timeout=15000):
-                        page.locator("input[name='Submit']").click()
-
-                    # Esperar a que la URL cambie (login exitoso) o se quede
-                    # en index.jsp con código de error (login fallido).
+                    log_queue = []
                     try:
-                        page.wait_for_url(lambda url: 'index.jsp' not in url, timeout=15000)
-                    except Exception:
-                        current_url = page.url
-                        if 'err=' in current_url:
-                            import re as _re
-                            err_match = _re.search(r'err=(\d+)', current_url)
-                            err_code = err_match.group(1) if err_match else 'desconocido'
-                            err_msgs = {
-                                '52': 'Credenciales inválidas o sesión ya activa en otro equipo.',
-                                '51': 'Usuario no encontrado en el sistema.',
-                                '53': 'Usuario bloqueado por múltiples intentos fallidos.',
-                                '54': 'Contraseña expirada. Debe renovarla en Mercurio.',
-                            }
-                            detalle = err_msgs.get(err_code, f'Error no catalogado (código {err_code}).')
-                            yield _sse_error(
-                                f'Login en Mercurio rechazado (err={err_code}): {detalle} '
-                                f'Verifique las credenciales o contacte al administrador de Mercurio.'
-                            )
-                        else:
-                            html_post = page.content()
-                            if 'Login incorrecto' in html_post or 'Usuario Inactivo' in html_post:
-                                yield _sse_error('Login fallido. Verifica credenciales.')
-                            else:
-                                yield _sse_error('Login en Mercurio no respondió a tiempo. Intente de nuevo.')
+                        mercurio_login(
+                            page, self.MERCURIO_URL, self.MERCURIO_USUARIO,
+                            self.MERCURIO_CLAVE, log_fn=log_queue.append,
+                        )
+                    except MercurioLoginError as exc:
+                        for m in log_queue: yield _sse(m)
+                        yield _sse_error(str(exc))
                         browser.close()
                         return
+                    for m in log_queue: yield _sse(m)
 
-                    page.wait_for_load_state('domcontentloaded', timeout=15000)
-                    page.wait_for_timeout(2000)
-                    yield _sse('✅ Login OK')
-
-                    # Navegar a WorkFlow
-                    yield _sse('📂 Navegando a BANDEJAS → WorkFlow...')
-                    main_frame = page.frames[0]
-                    main_frame.locator('text=BANDEJAS').first.hover()
-                    page.wait_for_timeout(800)
-                    main_frame.locator('text=WorkFlow').first.click()
-                    page.wait_for_timeout(3000)
-
-                    def get_wf_frame():
-                        return next((f for f in page.frames if 'BandejaRutas' in f.url), None)
-
-                    wf_frame = get_wf_frame()
-                    if not wf_frame:
-                        yield _sse_error('No se encontró el frame BandejaRutas.')
+                    log_queue = []
+                    try:
+                        wf_frame = abrir_workflow(page, log_fn=log_queue.append)
+                    except MercurioNavigationError as exc:
+                        for m in log_queue: yield _sse(m)
+                        yield _sse_error(str(exc))
                         browser.close()
                         return
+                    for m in log_queue: yield _sse(m)
 
-                    # Filtrar Paso=1
-                    yield _sse('🔍 Aplicando filtro Paso=1...')
-                    # Leer opciones disponibles del select
-                    paso_select = wf_frame.locator("select[name='listapaso']")
-                    opciones_html = paso_select.evaluate('el => el.outerHTML')
-                    opciones = re.findall(r'<option\s+value="([^"]*)"[^>]*>(.*?)</option>', opciones_html, re.IGNORECASE)
-                    yield _sse(f'   Opciones disponibles: {opciones}')
-
-                    # Buscar la opción que corresponda a Paso 1
-                    paso_valor = None
-                    for val, txt in opciones:
-                        if val == '1' or txt.strip() == '1':
-                            paso_valor = val
-                            break
-                    if paso_valor:
-                        yield _sse(f'   Seleccionando valor: "{paso_valor}"')
-                        try:
-                            with page.expect_response(lambda r: 'BandejaRutas' in r.url and r.status == 200, timeout=20000):
-                                paso_select.select_option(paso_valor)
-                        except Exception as e_filtro:
-                            yield _sse(f'⚠️ expect_response falló ({e_filtro}), esperando recarga del frame...')
-                            page.wait_for_timeout(5000)
-                        page.wait_for_timeout(2000)
-                        wf_frame = get_wf_frame()
-                        if not wf_frame:
-                            yield _sse_error('Frame BandejaRutas no encontrado después del filtro.')
-                            browser.close()
-                            return
-                        wf_frame.wait_for_load_state('domcontentloaded')
-                        page.wait_for_timeout(1000)
-                    else:
+                    log_queue = []
+                    try:
+                        nuevo_wf = filtrar_paso(page, wf_frame, '1', log_fn=log_queue.append)
+                    except MercurioPasoError as exc:
+                        for m in log_queue: yield _sse(m)
+                        yield _sse_error(str(exc))
+                        browser.close()
+                        return
+                    for m in log_queue: yield _sse(m)
+                    if nuevo_wf is None:
                         yield _sse('ℹ️ No hay radicados en Paso=1 (Mercurio oculta el filtro cuando está vacío). Finalizando sin errores.')
                         browser.close()
                         yield _sse_result({
@@ -1456,26 +1310,11 @@ class SincronizarMercurioView(APIView):
                             'mensaje':     'No hay radicados para mostrar en Paso=1.',
                         })
                         return
+                    wf_frame = nuevo_wf
 
                     html = wf_frame.content()
 
-                    # La paginación solo existe cuando hay más de una página
-                    try:
-                        pag_select_html = wf_frame.locator("select[name='listapagina']").evaluate(
-                            'el => el.outerHTML', timeout=3000
-                        )
-                        paginas_opts = re.findall(
-                            r'<option value="(\d+)"', pag_select_html,
-                        )
-                        # Extraer URL base de paginación del onchange del select
-                        pag_base_match = re.search(
-                            r"top\.location\s*=\s*'([^']*?pagBanRutas=)'",
-                            pag_select_html,
-                        )
-                        pag_base_path = pag_base_match.group(1) if pag_base_match else None
-                    except Exception:
-                        paginas_opts = []
-                        pag_base_path = None
+                    paginas_opts, pag_base_path = detectar_paginacion(wf_frame)
                     total_paginas = len(paginas_opts) if paginas_opts else 1
                     yield _sse(f'📄 Páginas detectadas: {total_paginas}')
 
@@ -1605,43 +1444,12 @@ class SincronizarMercurioView(APIView):
                         yield _sse(f'Navegando a página {pagina_actual + 1}...')
 
                         pag_value = paginas_opts[pagina_actual]
-                        if pag_base_path:
-                            nav_url = f'https://mercurio.finagro.com.co{pag_base_path}{pag_value}'
-                        else:
-                            nav_url = f'https://mercurio.finagro.com.co/mercurio/ControlDoc/BandejaRutas.jsp?pagBanRutas={pag_value}'
-
-                        # Navegar la página principal a la URL de paginación
-                        # (el select original usa top.location, así que navegamos
-                        # la página completa y re-buscamos el frame).
-                        page.goto(nav_url, timeout=30000, wait_until='domcontentloaded')
-                        page.wait_for_timeout(3000)
-
-                        # Después de navegar, el contenido puede quedar en la
-                        # página principal o dentro de un frame.
-                        wf_frame = get_wf_frame()
-                        if not wf_frame:
-                            # El contenido quedó en la página principal (no hay frame)
-                            # Crear un wrapper que delegue al page directamente.
-                            class _PageAsFrame:
-                                def __init__(self, pg):
-                                    self._pg = pg
-                                def content(self):
-                                    return self._pg.content()
-                                def evaluate(self, expr):
-                                    return self._pg.evaluate(expr)
-                                def locator(self, sel):
-                                    return self._pg.locator(sel)
-                                def wait_for_load_state(self, *a, **kw):
-                                    return self._pg.wait_for_load_state(*a, **kw)
-                                @property
-                                def url(self):
-                                    return self._pg.url
-                            if 'BandejaRutas' in page.url:
-                                yield _sse('   (contenido en página principal, sin frame)')
-                                wf_frame = _PageAsFrame(page)
-                            else:
-                                yield _sse('⚠️ Frame perdido después de cambiar página, finalizando.')
-                                break
+                        log_queue = []
+                        wf_frame = navegar_a_pagina(page, pag_value, pag_base_path, log_fn=log_queue.append)
+                        for m in log_queue: yield _sse(m)
+                        if wf_frame is None:
+                            yield _sse('⚠️ Frame perdido después de cambiar página, finalizando.')
+                            break
 
                     browser.close()
 
