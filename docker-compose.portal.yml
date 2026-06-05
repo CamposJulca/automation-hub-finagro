@@ -1,0 +1,79 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Hub Portal — stack autocontenido (despliegue modular ilab · 172.16.0.98)
+# ──────────────────────────────────────────────────────────────────────────────
+# Una app = un puerto. El portal expone SOLO el landing/orquestador del Hub en
+# el puerto 9100. Facturación (9101) y SIGA (9104) son apps independientes con
+# su propio compose. SARLAFT / NLP / ICR / Innovación quedan retirados.
+#
+#   Frontend (nginx)  →  http://172.16.0.98:9100   (server block :9000 interno)
+#   Backend  (Django) →  interno, solo vía red hub-net
+#   DB       (Postgres) → interno, solo vía red hub-net
+#
+# Levantar:  docker compose -f docker-compose.portal.yml --env-file .env.prod up -d --build
+# ══════════════════════════════════════════════════════════════════════════════
+
+networks:
+  hub-net:
+    driver: bridge
+
+services:
+
+  # ── Base de datos PostgreSQL (interno) ───────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-automation_hub}
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data_portal:/var/lib/postgresql/data
+    networks:
+      - hub-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Backend Django + Gunicorn (interno · login del hub + landing) ────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    env_file: .env.prod
+    environment:
+      DATABASE_URL:  "true"
+      DB_HOST:       db
+      ALLOWED_HOSTS: "*"
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - hub-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Frontend React + Nginx (portal en :9100) ─────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend.portal
+    ports:
+      - "9100:9000"   # Hub portal → 172.16.0.98:9100
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - hub-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data_portal:
