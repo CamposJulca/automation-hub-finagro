@@ -229,16 +229,16 @@ function SinFechaModal({ facturas, onClose }) {
 }
 
 /* ── Modal de progreso ───────────────────────────────────────────────────── */
-function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, aborting }) {
+function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, aborting, onPause, onResume, paused, pausing }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  const statusColor = status === 'ok' ? '#4caf50' : status === 'aborted' ? '#ffb74d' : status === 'error' ? '#ef5350' : '#ffb74d';
+  const statusColor = status === 'ok' ? '#4caf50' : status === 'aborted' ? '#ffb74d' : status === 'error' ? '#ef5350' : (paused ? '#e3b341' : '#ffb74d');
   const statusBg    = status === 'ok' ? '#1b5e20' : status === 'aborted' ? '#e65100' : status === 'error' ? '#b71c1c' : '#e65100';
-  const statusLabel = status === 'ok' ? '✅ Completado' : status === 'aborted' ? '⚠️ Abortado — progreso guardado' : status === 'error' ? '❌ Error' : '⏳ Ejecutando...';
+  const statusLabel = status === 'ok' ? '✅ Completado' : status === 'aborted' ? '⚠️ Abortado — progreso guardado' : status === 'error' ? '❌ Error' : (paused ? '⏸ Pausado — esperando reanudar' : '⏳ Ejecutando...');
 
   return (
     <div style={{
@@ -268,7 +268,7 @@ function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, abo
               width: 10, height: 10, borderRadius: '50%',
               background: statusColor,
               boxShadow: `0 0 8px ${statusColor}`,
-              animation: !isDone ? 'pulse 1.2s ease-in-out infinite' : 'none',
+              animation: (!isDone && !paused) ? 'pulse 1.2s ease-in-out infinite' : 'none',
             }} />
             <div>
               <div style={{ color: '#e6edf3', fontWeight: 700, fontSize: 14 }}>{title}</div>
@@ -276,6 +276,22 @@ function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, abo
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            {!isDone && (
+              <button
+                onClick={paused ? onResume : onPause}
+                disabled={pausing}
+                style={{
+                  background: pausing ? '#21262d' : (paused ? '#0f2e16' : '#3a2f0b'),
+                  border: `1px solid ${paused ? '#3fb950' : '#e3b341'}`,
+                  borderRadius: 6, color: pausing ? '#484f58' : (paused ? '#3fb950' : '#e3b341'),
+                  padding: '5px 14px', cursor: pausing ? 'not-allowed' : 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                  transition: 'background 0.2s',
+                }}
+              >
+                {pausing ? '...' : (paused ? '▶ Despausar' : '⏸ Pausar')}
+              </button>
+            )}
             {!isDone && (
               <button
                 onClick={onAbort}
@@ -294,17 +310,17 @@ function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, abo
             )}
             <button
               onClick={onClose}
-              disabled={!isDone}
+              title={isDone ? 'Cerrar' : 'Oculta esta ventana; el proceso sigue en segundo plano'}
               style={{
-                background: isDone ? '#21262d' : 'transparent',
+                background: '#21262d',
                 border: '1px solid #30363d',
-                borderRadius: 6, color: isDone ? '#e6edf3' : '#484f58',
-                padding: '5px 14px', cursor: isDone ? 'pointer' : 'not-allowed',
+                borderRadius: 6, color: '#e6edf3',
+                padding: '5px 14px', cursor: 'pointer',
                 fontSize: 12, fontWeight: 600,
                 transition: 'background 0.2s',
               }}
             >
-              {isDone ? 'Cerrar' : 'Esperando...'}
+              {isDone ? 'Cerrar' : '✕ Cerrar'}
             </button>
           </div>
         </div>
@@ -562,6 +578,8 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const [descargando, setDescargando]         = useState(false);
   const [procesando, setProcesando]           = useState(false);
   const [aborting, setAborting]               = useState(false);
+  const [paused, setPaused]                   = useState(false);
+  const [pausing, setPausing]                 = useState(false);
 
   // Modal de logs
   const [modal, setModal] = useState(null);
@@ -704,18 +722,18 @@ function FacturacionDashboard({ authHeader, onLogout }) {
     try {
       await consumeSSE(`${API}/facturacion/sincronizar-mercurio/stream/`, {
         headers: { Authorization: authHeader },
-        onLog: (line) => setModal(m => ({ ...m, logs: [...m.logs, line] })),
+        onLog: (line) => setModal(m => m ? ({ ...m, logs: [...m.logs, line] }) : m),
         onResult: (data) => {
           setMercurioResult(data);
           const resumen = data.mensaje
             ? `─── ${data.mensaje} ───`
             : `─── Completado: ${data.pdfs_nuevos ?? 0} nuevos · ${data.pdfs_skip ?? 0} ya existían · ${data.errores ?? 0} errores ───`;
-          setModal(m => ({ ...m, logs: [...m.logs, resumen], isDone: true, status: data.errores > 0 ? 'error' : 'ok' }));
+          setModal(m => m ? ({ ...m, logs: [...m.logs, resumen], isDone: true, status: data.errores > 0 ? 'error' : 'ok' }) : m);
           cargarListaPDFs();
         },
         onError: (msg) => {
           setMercurioResult({ status: 'error', mensaje: msg });
-          setModal(m => ({ ...m, isDone: true, status: 'error' }));
+          setModal(m => m ? ({ ...m, logs: [...m.logs, `ERROR: ${msg}`], isDone: true, status: 'error' }) : m);
         },
       });
     } catch (e) {
@@ -798,11 +816,44 @@ function FacturacionDashboard({ authHeader, onLogout }) {
         method: 'POST',
         headers: { Authorization: authHeader },
       });
+      setPaused(false); // un abort despausa para que el job pueda salir
       setModal(m => m ? ({ ...m, logs: [...m.logs, '⚠️  Señal de abort enviada — guardando progreso...'] }) : m);
     } catch {
       setModal(m => m ? ({ ...m, logs: [...m.logs, 'Error enviando señal de abort.'] }) : m);
     } finally {
       setAborting(false);
+    }
+  };
+
+  const pausar = async () => {
+    setPausing(true);
+    try {
+      await fetch(`${API}/facturacion/pausar/`, {
+        method: 'POST',
+        headers: { Authorization: authHeader },
+      });
+      setPaused(true);
+      setModal(m => m ? ({ ...m, logs: [...m.logs, '⏸  Pausa solicitada — se detendrá entre documentos...'] }) : m);
+    } catch {
+      setModal(m => m ? ({ ...m, logs: [...m.logs, 'Error enviando señal de pausa.'] }) : m);
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const despausar = async () => {
+    setPausing(true);
+    try {
+      await fetch(`${API}/facturacion/despausar/`, {
+        method: 'POST',
+        headers: { Authorization: authHeader },
+      });
+      setPaused(false);
+      setModal(m => m ? ({ ...m, logs: [...m.logs, '▶️  Reanudando proceso...'] }) : m);
+    } catch {
+      setModal(m => m ? ({ ...m, logs: [...m.logs, 'Error enviando señal de reanudación.'] }) : m);
+    } finally {
+      setPausing(false);
     }
   };
 
@@ -819,6 +870,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
 
   const descargarConFecha = async (desde, hasta) => {
     setDescargando(true);
+    setPaused(false);
     const body = {};
     if (desde) body.fecha_desde = `${desde}T00:00:00Z`;
     if (hasta)  body.fecha_hasta = `${hasta}T23:59:59Z`;
@@ -835,22 +887,23 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       await consumeSSE(`${API}/facturacion/descargar/stream/`, {
         headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
         body,
-        onLog: (line) => setModal(m => ({ ...m, logs: [...m.logs, line] })),
+        onLog: (line) => setModal(m => m ? ({ ...m, logs: [...m.logs, line] }) : m),
         onResult: (data) => {
           const aborted = data.status === 'aborted';
-          setModal(m => ({
+          setModal(m => m ? ({
             ...m,
             logs: [...m.logs, `─── ${aborted ? 'Abortado' : 'Completado'}: ${data.mensajes_procesados ?? 0} mensajes en histórico ───`],
             isDone: true,
             status: aborted ? 'aborted' : 'ok',
-          }));
+          }) : m);
           setAborting(false);
+          setPaused(false);
           cargarStats();
         },
-        onError: (msg) => setModal(m => ({ ...m, logs: [...m.logs, `ERROR: ${msg}`], isDone: true, status: 'error' })),
+        onError: (msg) => setModal(m => m ? ({ ...m, logs: [...m.logs, `ERROR: ${msg}`], isDone: true, status: 'error' }) : m),
       });
     } catch (e) {
-      setModal(m => ({ ...m, logs: [...m.logs, `ERROR: ${e.message}`], isDone: true, status: 'error' }));
+      setModal(m => m ? ({ ...m, logs: [...m.logs, `ERROR: ${e.message}`], isDone: true, status: 'error' }) : m);
     } finally {
       setDescargando(false);
     }
@@ -862,6 +915,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   /* ── Procesar con streaming ── */
   const procesar = async () => {
     setProcesando(true);
+    setPaused(false);
     setModal({
       title: 'Clasificar y extraer metadata',
       subtitle: 'ZipClassifier · InvoiceMetadataExtractor',
@@ -873,20 +927,23 @@ function FacturacionDashboard({ authHeader, onLogout }) {
     try {
       await consumeSSE(`${API}/facturacion/procesar/stream/`, {
         headers: { Authorization: authHeader },
-        onLog: (line) => setModal(m => ({ ...m, logs: [...m.logs, line] })),
+        onLog: (line) => setModal(m => m ? ({ ...m, logs: [...m.logs, line] }) : m),
         onResult: async (data) => {
-          setModal(m => ({
+          const aborted = data.status === 'aborted';
+          setModal(m => m ? ({
             ...m,
-            logs: [...m.logs, `─── Completado: ${data.total ?? 0} facturas · ${data.errores ?? 0} errores ───`],
+            logs: [...m.logs, `─── ${aborted ? 'Abortado' : 'Completado'}: ${data.total ?? 0} facturas · ${data.errores ?? 0} errores ───`],
             isDone: true,
-            status: data.errores > 0 ? 'error' : 'ok',
-          }));
+            status: aborted ? 'aborted' : (data.errores > 0 ? 'error' : 'ok'),
+          }) : m);
+          setAborting(false);
+          setPaused(false);
           await cargarFacturas();
         },
-        onError: (msg) => setModal(m => ({ ...m, logs: [...m.logs, `ERROR: ${msg}`], isDone: true, status: 'error' })),
+        onError: (msg) => setModal(m => m ? ({ ...m, logs: [...m.logs, `ERROR: ${msg}`], isDone: true, status: 'error' }) : m),
       });
     } catch (e) {
-      setModal(m => ({ ...m, logs: [...m.logs, `ERROR: ${e.message}`], isDone: true, status: 'error' }));
+      setModal(m => m ? ({ ...m, logs: [...m.logs, `ERROR: ${e.message}`], isDone: true, status: 'error' }) : m);
     } finally {
       setProcesando(false);
     }
@@ -975,9 +1032,13 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           logs={modal.logs}
           isDone={modal.isDone}
           status={modal.status}
-          onClose={() => { setModal(null); setAborting(false); }}
+          onClose={() => { setModal(null); setAborting(false); setPaused(false); setPausing(false); }}
           onAbort={abortar}
           aborting={aborting}
+          onPause={pausar}
+          onResume={despausar}
+          paused={paused}
+          pausing={pausing}
         />
       )}
 

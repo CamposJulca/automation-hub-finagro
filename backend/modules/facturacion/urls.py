@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     DescargarFacturasView, ProcesarFacturasView, ListarFacturasView,
-    DescargarStreamView, ProcesarStreamView, AbortarView, StatsDescargaView,
+    DescargarStreamView, ProcesarStreamView, AbortarView, PausarView, DespausarView, StatsDescargaView,
     SincronizarCronView, CronLogView, DescargarCarpetasView, InfoCarpetasView,
     ListarSemanasView, DescargarPDFsView,
     DescargarScriptView, DescargarInstaladorView, AbrirMercurioView,
@@ -18,6 +18,8 @@ urlpatterns = [
     path('descargar/stream/',           DescargarStreamView.as_view(),    name='facturacion-descargar-stream'),
     path('procesar/stream/',            ProcesarStreamView.as_view(),     name='facturacion-procesar-stream'),
     path('abortar/',                    AbortarView.as_view(),            name='facturacion-abortar'),
+    path('pausar/',                     PausarView.as_view(),             name='facturacion-pausar'),
+    path('despausar/',                  DespausarView.as_view(),          name='facturacion-despausar'),
     path('sincronizar-cron/',           SincronizarCronView.as_view(),    name='facturacion-sincronizar-cron'),
     path('cron-log/',                   CronLogView.as_view(),            name='facturacion-cron-log'),
     path('descargar-carpetas/',         DescargarCarpetasView.as_view(),  name='facturacion-descargar-carpetas'),

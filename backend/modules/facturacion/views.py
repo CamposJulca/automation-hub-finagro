@@ -235,6 +235,37 @@ class AbortarView(APIView):
             return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
 
+class PausarView(APIView):
+    """
+    POST /api/facturacion/pausar/
+    Pausa el job en curso en FactIA (se detiene en el próximo límite seguro
+    entre documentos, sin dejar ninguno a medio radicar).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            resp = _requests.post(f'{FACTIA_URL}/api/pause/', timeout=5)
+            return Response(resp.json())
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class DespausarView(APIView):
+    """
+    POST /api/facturacion/despausar/
+    Reanuda un job previamente pausado en FactIA.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            resp = _requests.post(f'{FACTIA_URL}/api/resume/', timeout=5)
+            return Response(resp.json())
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
 class DescargarCarpetasView(APIView):
     """
     GET /api/facturacion/descargar-carpetas/          → sirve ZIP cacheado
