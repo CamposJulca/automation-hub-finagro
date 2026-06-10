@@ -7,6 +7,7 @@ from .views import (
     DescargarScriptView, DescargarInstaladorView, AbrirMercurioView,
     SincronizarMercurioView, MercurioPDFsListView, DescargarMercurioPDFView,
     DescargarMercurioPDFsMasivoView,
+    MercurioPausarView, MercurioDespausarView, MercurioAbortarView,
 )
 from .sql_views import SqlRunView, SqlSchemaView
 
@@ -30,6 +31,9 @@ urlpatterns = [
     path('descargar-instalador/',       DescargarInstaladorView.as_view(),name='facturacion-descargar-instalador'),
     path('abrir-mercurio/',             AbrirMercurioView.as_view(),      name='facturacion-abrir-mercurio'),
     path('sincronizar-mercurio/stream/', SincronizarMercurioView.as_view(),  name='facturacion-sincronizar-mercurio'),
+    path('mercurio/pausar/',            MercurioPausarView.as_view(),        name='facturacion-mercurio-pausar'),
+    path('mercurio/despausar/',         MercurioDespausarView.as_view(),     name='facturacion-mercurio-despausar'),
+    path('mercurio/abortar/',           MercurioAbortarView.as_view(),       name='facturacion-mercurio-abortar'),
     path('mercurio-pdfs/',              MercurioPDFsListView.as_view(),      name='facturacion-mercurio-pdfs-lista'),
     path('mercurio-pdfs/masivo/',       DescargarMercurioPDFsMasivoView.as_view(), name='facturacion-mercurio-pdfs-masivo'),
     path('mercurio-pdfs/<str:nombre>/', DescargarMercurioPDFView.as_view(), name='facturacion-mercurio-pdf'),

@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from decimal import Decimal, InvalidOperation
 
 import requests as _requests
@@ -931,6 +932,64 @@ class DescargarMercurioPDFsMasivoView(APIView):
         )
 
 
+# ── Control del sync de Mercurio (pausa / abort) ──────────────────────────────
+# El backend corre con gunicorn --workers 3: el stream SSE vive en un worker y el
+# POST de control cae en otro, así que un evento en memoria NO se comparte. Se usa
+# un flag en disco: los 3 workers son procesos del MISMO contenedor y comparten el
+# filesystem, por lo que ven el flag. El loop lo chequea entre documentos.
+_MERCURIO_CONTROL_DIR = '/tmp/mercurio/control'
+_MERCURIO_PAUSE_FLAG  = os.path.join(_MERCURIO_CONTROL_DIR, 'pause')
+_MERCURIO_ABORT_FLAG  = os.path.join(_MERCURIO_CONTROL_DIR, 'abort')
+
+
+def _mercurio_set_flag(path):
+    os.makedirs(_MERCURIO_CONTROL_DIR, exist_ok=True)
+    with open(path, 'w') as f:
+        f.write('1')
+
+
+def _mercurio_clear_flag(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def _mercurio_reset_control():
+    """Estado limpio antes de iniciar un sync: sin abort y sin pausa."""
+    _mercurio_clear_flag(_MERCURIO_PAUSE_FLAG)
+    _mercurio_clear_flag(_MERCURIO_ABORT_FLAG)
+
+
+class MercurioPausarView(APIView):
+    """POST /api/facturacion/mercurio/pausar/ — pausa el sync en el próximo
+    límite seguro entre documentos (ningún radicado queda a medio descargar)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _mercurio_set_flag(_MERCURIO_PAUSE_FLAG)
+        return Response({'status': 'paused'})
+
+
+class MercurioDespausarView(APIView):
+    """POST /api/facturacion/mercurio/despausar/ — reanuda un sync pausado."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _mercurio_clear_flag(_MERCURIO_PAUSE_FLAG)
+        return Response({'status': 'running'})
+
+
+class MercurioAbortarView(APIView):
+    """POST /api/facturacion/mercurio/abortar/ — aborta el sync en curso."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _mercurio_set_flag(_MERCURIO_ABORT_FLAG)
+        _mercurio_clear_flag(_MERCURIO_PAUSE_FLAG)  # despausa para que el loop salga
+        return Response({'status': 'abort_requested'})
+
+
 class SincronizarMercurioView(APIView):
     """
     POST /api/facturacion/sincronizar-mercurio/stream/
@@ -1288,6 +1347,7 @@ class SincronizarMercurioView(APIView):
 
         # ── generador SSE ──────────────────────────────────────────────────
         def generar():
+            _mercurio_reset_control()
             try:
                 with sync_playwright() as p:
                     browser = p.chromium.launch(headless=True)
@@ -1363,6 +1423,7 @@ class SincronizarMercurioView(APIView):
                     correos_hash   = defaultdict(list)
                     pagina_actual = 0
                     prev_doc_ids = set()
+                    aborted      = False
 
                     while True:
                         html       = wf_frame.content()
@@ -1379,6 +1440,21 @@ class SincronizarMercurioView(APIView):
                             yield _sse(f'── Página {pagina_actual + 1} — {len(docs_pag)} documentos ──')
 
                             for i, doc in enumerate(docs_pag):
+                                # ── Límite seguro entre documentos: pausa / abort ──
+                                if os.path.exists(_MERCURIO_ABORT_FLAG):
+                                    aborted = True
+                                    break
+                                if os.path.exists(_MERCURIO_PAUSE_FLAG):
+                                    yield _sse('⏸ Pausado — esperando reanudar...')
+                                    while os.path.exists(_MERCURIO_PAUSE_FLAG):
+                                        if os.path.exists(_MERCURIO_ABORT_FLAG):
+                                            break
+                                        time.sleep(0.4)
+                                    if os.path.exists(_MERCURIO_ABORT_FLAG):
+                                        aborted = True
+                                        break
+                                    yield _sse('▶ Reanudado.')
+
                                 id_doc   = doc['id']
                                 pdf_dest = os.path.join(self.PDF_DIR, f'{id_doc}.pdf')
                                 eml_dest = os.path.join(self.DOWNLOAD_DIR, f'{id_doc}.eml')
@@ -1466,6 +1542,10 @@ class SincronizarMercurioView(APIView):
 
                                 page.wait_for_timeout(200)
 
+                        if aborted:
+                            yield _sse('⏹ Sincronización abortada por el usuario — progreso guardado.')
+                            break
+
                         # Siguiente página
                         if not paginas_opts or pagina_actual + 1 >= len(paginas_opts):
                             yield _sse(f'✅ Última página alcanzada ({pagina_actual + 1})')
@@ -1516,7 +1596,7 @@ class SincronizarMercurioView(APIView):
                         yield _sse(f'   • {rid}')
 
                 yield _sse_result({
-                    'status':           'ok',
+                    'status':           'aborted' if aborted else 'ok',
                     'pdfs_nuevos':      pdfs_ok,
                     'pdfs_skip':        pdfs_skip,
                     'errores':          errores,

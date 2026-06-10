@@ -717,6 +717,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       logs:     [],
       isDone:   false,
       status:   'running',
+      control:  'mercurio',   // los botones ⏸/⏹ apuntan al control de Mercurio (Django)
     });
 
     try {
@@ -725,15 +726,18 @@ function FacturacionDashboard({ authHeader, onLogout }) {
         onLog: (line) => setModal(m => m ? ({ ...m, logs: [...m.logs, line] }) : m),
         onResult: (data) => {
           setMercurioResult(data);
+          const aborted = data.status === 'aborted';
           const resumen = data.mensaje
             ? `─── ${data.mensaje} ───`
-            : `─── Completado: ${data.pdfs_nuevos ?? 0} nuevos · ${data.pdfs_skip ?? 0} ya existían · ${data.errores ?? 0} errores ───`;
-          setModal(m => m ? ({ ...m, logs: [...m.logs, resumen], isDone: true, status: data.errores > 0 ? 'error' : 'ok' }) : m);
+            : `─── ${aborted ? 'Abortado' : 'Completado'}: ${data.pdfs_nuevos ?? 0} nuevos · ${data.pdfs_skip ?? 0} ya existían · ${data.errores ?? 0} errores ───`;
+          setModal(m => m ? ({ ...m, logs: [...m.logs, resumen], isDone: true, status: aborted ? 'aborted' : (data.errores > 0 ? 'error' : 'ok') }) : m);
+          setPaused(false); setPausing(false); setAborting(false);
           cargarListaPDFs();
         },
         onError: (msg) => {
           setMercurioResult({ status: 'error', mensaje: msg });
           setModal(m => m ? ({ ...m, logs: [...m.logs, `ERROR: ${msg}`], isDone: true, status: 'error' }) : m);
+          setPaused(false); setPausing(false); setAborting(false);
         },
       });
     } catch (e) {
@@ -809,10 +813,14 @@ function FacturacionDashboard({ authHeader, onLogout }) {
 
   useEffect(() => { cargarFacturas(); cargarStats(); cargarCronLog(); cargarSemanas(); }, [cargarFacturas, cargarStats, cargarCronLog, cargarSemanas]);
 
+  // El sync de Mercurio corre en Django con su propio control (flag en disco);
+  // los demás jobs (descargar/procesar) corren en factia. El modal indica a cuál apuntar.
+  const controlBase = () => (modal?.control === 'mercurio' ? 'mercurio/' : '');
+
   const abortar = async () => {
     setAborting(true);
     try {
-      await fetch(`${API}/facturacion/abortar/`, {
+      await fetch(`${API}/facturacion/${controlBase()}abortar/`, {
         method: 'POST',
         headers: { Authorization: authHeader },
       });
@@ -828,7 +836,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const pausar = async () => {
     setPausing(true);
     try {
-      await fetch(`${API}/facturacion/pausar/`, {
+      await fetch(`${API}/facturacion/${controlBase()}pausar/`, {
         method: 'POST',
         headers: { Authorization: authHeader },
       });
@@ -844,7 +852,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const despausar = async () => {
     setPausing(true);
     try {
-      await fetch(`${API}/facturacion/despausar/`, {
+      await fetch(`${API}/facturacion/${controlBase()}despausar/`, {
         method: 'POST',
         headers: { Authorization: authHeader },
       });
@@ -881,6 +889,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       logs: [],
       isDone: false,
       status: 'running',
+      control: 'factia',
     });
 
     try {
@@ -922,6 +931,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
       logs: [],
       isDone: false,
       status: 'running',
+      control: 'factia',
     });
 
     try {
