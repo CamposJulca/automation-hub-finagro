@@ -229,7 +229,7 @@ function SinFechaModal({ facturas, onClose }) {
 }
 
 /* ── Modal de progreso ───────────────────────────────────────────────────── */
-function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, aborting, onPause, onResume, paused, pausing }) {
+function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, aborting, onPause, onResume, paused, pausing, abortLabel = 'Abortar', abortingLabel = 'Abortando...' }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -276,7 +276,7 @@ function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, abo
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            {!isDone && (
+            {!isDone && onPause && (
               <button
                 onClick={paused ? onResume : onPause}
                 disabled={pausing}
@@ -305,7 +305,7 @@ function LogModal({ title, subtitle, logs, isDone, status, onClose, onAbort, abo
                   transition: 'background 0.2s',
                 }}
               >
-                {aborting ? 'Abortando...' : '⏹ Abortar'}
+                {aborting ? abortingLabel : `⏹ ${abortLabel}`}
               </button>
             )}
             <button
@@ -593,6 +593,7 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const [mercurioResult, setMercurioResult]   = useState(null);
   const [mercurioPDFs, setMercurioPDFs]       = useState(null); // lista de PDFs en servidor
   const [descargaMasivaLoading, setDescargaMasivaLoading] = useState(false);
+  const descargaCancelRef = useRef(false); // corta el loop de descarga masiva local
   const [savedDirName, setSavedDirName] = useState(null); // nombre de la carpeta guardada
 
   // Cargar nombre de carpeta guardada al montar
@@ -629,20 +630,56 @@ function FacturacionDashboard({ authHeader, onLogout }) {
     const { pdfs } = await listRes.json();
     if (!pdfs || pdfs.length === 0) { alert('No hay PDFs disponibles para descargar.'); return; }
 
-    let ok = 0, errores = 0;
-    for (const pdf of pdfs) {
+    descargaCancelRef.current = false;
+    setModal({
+      title:    'Descarga masiva de PDFs',
+      subtitle: `Carpeta "${dirHandle.name}" — solo agrega los nuevos, no reemplaza`,
+      logs:     [`${pdfs.length} PDFs en el servidor. Descargando los que falten...`],
+      isDone:   false,
+      status:   'running',
+      control:  'local',   // el botón ⏹ Cancelar corta el loop JS (no hay job en backend)
+    });
+
+    let nuevos = 0, existian = 0, errores = 0, cancelado = false;
+    for (let idx = 0; idx < pdfs.length; idx++) {
+      if (descargaCancelRef.current) { cancelado = true; break; }
+      const pdf = pdfs[idx];
+      const prefijo = `[${idx + 1}/${pdfs.length}]`;
       try {
+        // ── No reemplazar: si el archivo ya está en la carpeta, se omite ──
+        let yaExiste = false;
+        try { await dirHandle.getFileHandle(pdf.nombre); yaExiste = true; } catch { yaExiste = false; }
+        if (yaExiste) {
+          existian++;
+          continue;
+        }
+
         const res = await fetch(`${API}/facturacion/mercurio-pdfs/${pdf.nombre}/`, { headers: { Authorization: authHeader } });
-        if (!res.ok) { errores++; continue; }
+        if (!res.ok) {
+          errores++;
+          setModal(m => m ? ({ ...m, logs: [...m.logs, `  ${prefijo} ❌ ${pdf.nombre} — HTTP ${res.status}`] }) : m);
+          continue;
+        }
         const blob = await res.blob();
         const fileHandle = await dirHandle.getFileHandle(pdf.nombre, { create: true });
         const writable = await fileHandle.createWritable();
         await writable.write(blob);
         await writable.close();
-        ok++;
-      } catch { errores++; }
+        nuevos++;
+        setModal(m => m ? ({ ...m, logs: [...m.logs, `  ${prefijo} ⬇️ ${pdf.nombre}`] }) : m);
+      } catch (e) {
+        errores++;
+        setModal(m => m ? ({ ...m, logs: [...m.logs, `  ${prefijo} ❌ ${pdf.nombre} — ${e.message}`] }) : m);
+      }
     }
-    alert(`Descarga masiva completada.\n${ok} PDFs guardados en "${dirHandle.name}"${errores > 0 ? `\n${errores} con errores` : ''}`);
+
+    const resumen = `─── ${cancelado ? 'Cancelado' : 'Completado'}: ${nuevos} nuevos · ${existian} ya estaban · ${errores} errores ───`;
+    setModal(m => m ? ({
+      ...m,
+      logs:   [...m.logs, resumen],
+      isDone: true,
+      status: cancelado ? 'aborted' : (errores > 0 ? 'error' : 'ok'),
+    }) : m);
   };
 
   const descargaMasivaPDFs = async () => {
@@ -818,6 +855,12 @@ function FacturacionDashboard({ authHeader, onLogout }) {
   const controlBase = () => (modal?.control === 'mercurio' ? 'mercurio/' : '');
 
   const abortar = async () => {
+    // Descarga masiva local: no hay job en backend, solo cortamos el loop JS.
+    if (modal?.control === 'local') {
+      descargaCancelRef.current = true;
+      setModal(m => m ? ({ ...m, logs: [...m.logs, '⏹ Cancelando descarga...'] }) : m);
+      return;
+    }
     setAborting(true);
     try {
       await fetch(`${API}/facturacion/${controlBase()}abortar/`, {
@@ -1045,10 +1088,12 @@ function FacturacionDashboard({ authHeader, onLogout }) {
           onClose={() => { setModal(null); setAborting(false); setPaused(false); setPausing(false); }}
           onAbort={abortar}
           aborting={aborting}
-          onPause={pausar}
-          onResume={despausar}
+          onPause={modal.control === 'local' ? undefined : pausar}
+          onResume={modal.control === 'local' ? undefined : despausar}
           paused={paused}
           pausing={pausing}
+          abortLabel={modal.control === 'local' ? 'Cancelar' : 'Abortar'}
+          abortingLabel={modal.control === 'local' ? 'Cancelando...' : 'Abortando...'}
         />
       )}
 
